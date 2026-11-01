@@ -41,32 +41,70 @@ model Flow { … }
 variant and enum value. Missing docs are an error, not a warning. The first
 sentence is the summary used by generators for short docstrings.
 
-## 3. Scalars
+## 3. Core scalars (locked)
 
-| xapi | Meaning | Proto | Python | Go | C++ |
-|---|---|---|---|---|---|
-| `bool` | | `bool` | `bool` | `bool` | `bool` |
-| `i8 i16 i32 i64` | signed, range-checked | `int32`/`int64` | `int` | `int8…int64` | `int8_t…int64_t` |
-| `u8 u16 u32 u64` | unsigned, range-checked | `uint32`/`uint64` | `int` | `uint8…uint64` | `uint8_t…uint64_t` |
-| `f32 f64` | | `float`/`double` | `float` | `float32/64` | `float/double` |
-| `string` | UTF-8 | `string` | `str` | `string` | `std::string` |
-| `bytes` | | `bytes` | `bytes` | `[]byte` | `std::vector<std::byte>` |
-| `mac` | `xx:xx:xx:xx:xx:xx` | `string` | `str` | `net.HardwareAddr` | `xapi::Mac` |
-| `ipv4` `ipv6` `ip` | textual address | `string` | `ipaddress.*` | `netip.Addr` | `xapi::IpAddr` |
-| `cidr` | address/prefix | `string` | `ipaddress.*Network` | `netip.Prefix` | `xapi::Cidr` |
-| `hex` | `0x…` or bare hex string | `string` | `str` | `string` | `std::string` |
-| `uuid` | RFC 4122 | `string` | `uuid.UUID` | `uuid.UUID` | `xapi::Uuid` |
-| `duration` | signed nanoseconds | `google.protobuf.Duration` | `timedelta` | `time.Duration` | `std::chrono::nanoseconds` |
-| `timestamp` | UTC instant | `google.protobuf.Timestamp` | `datetime` | `time.Time` | `std::chrono::sys_time` |
-| `json` | opaque structured value | `google.protobuf.Value` | `Any` (`dict`/`list`/…) | `json.RawMessage` | `nlohmann::json` |
-| `key` | `string`, required, unique in containing list | `string` | `str` | `string` | `std::string` |
-| `key global` | as `key`, unique in the whole document | | | | |
-| `unit` | payload-less (only in unions) | empty message | marker class | empty struct | `std::monostate` |
-| `Table<T>` | columnar container, `T` must be a `table` | generated columnar message | `FlowMetricTable` | `FlowMetricTable` | `FlowMetricTable` |
+The core is deliberately small. A type is a primitive only if it passes this
+test:
 
-Formatted scalars are validated on `normalize()`/`validate()` and on decode.
-Their canonical string form is defined by the language (lower-case hex MAC,
-RFC 5952 IPv6), so round trips are stable across languages.
+> It cannot be expressed as another primitive plus a constraint without
+> changing its wire encoding or its natural native type.
+
+Six kinds of value pass. Everything else that looked like a scalar in earlier
+drafts is a constraint, a field modifier, a container, or a named alias.
+
+| Primitive | Values | JSON | Protobuf | Why it is irreducible |
+|---|---|---|---|---|
+| `bool` | true, false | `true`/`false` | `bool` | Not `int {0..1}`: JSON encodes it as a literal, not a number, and every language has a distinct boolean. |
+| `int` | integers | number | varint (`int64`/`uint64` or narrower, see aliases) | Signedness and width are range and representation properties, not kinds of value. One integer type; see below. |
+| `float` | IEEE reals | number (`"NaN"`, `"Inf"`, `"-Inf"` as strings) | `double` (or `float`, see aliases) | Not `int` with a range: the value set contains non-integers. Precision is a representation hint, not a kind. |
+| `string` | Unicode text, valid UTF-8 | string | `string` | Not "bytes with a UTF-8 constraint": JSON carries text natively, length is in characters, native type is text. |
+| `bytes` | octet sequence | base64 string | `bytes` | JSON cannot carry octets, so the encoding differs from `string`; native type is a byte buffer; `[u8]` would encode as an array of numbers. |
+| `json` | any JSON value | inline value | `google.protobuf.Value` | The one open type. A JSON document inside a `string` is double-encoded, opaque to tools and unvalidatable (InfraGraph flaw C2). Strictly an open value rather than a scalar; it lives in the core because nothing else can express it. |
+
+Native defaults: `int` is 64-bit signed, `float` is 64-bit. Those never change
+when a range changes, so generated SDK types are stable.
+
+### Representation aliases
+
+`i8 i16 i32 i64 u8 u16 u32 u64 f32 f64` are **aliases**, not primitives. Each
+is a primitive plus an implied range plus a representation hint, and nothing
+more:
+
+| Alias | Means | Native | Why it exists |
+|---|---|---|---|
+| `uint` | `int {0..}` | unsigned 64-bit | Counters and sizes read naturally as unsigned in Go, C++ and Arrow. |
+| `u8 u16 u32 u64` | `int {0..2^n-1}` | unsigned n-bit | Packet fields are genuinely n-bit; table columns are n/8 bytes wide. |
+| `i8 i16 i32 i64` | `int {-2^(n-1)..2^(n-1)-1}` | signed n-bit | Same, signed. |
+| `f32` | `float` | 32-bit | Half the memory in a column; interop with existing protobuf `float` fields. |
+| `f64` | `float` | 64-bit | Spelled out for symmetry; identical to `float`. |
+
+Rules:
+
+- An alias never changes validation beyond the range it implies. `u16 {64..9216}`
+  and `uint {64..9216}` accept exactly the same values; only the generated
+  native type differs.
+- A range that exceeds the alias is a compile error.
+- Protobuf: all integer forms are varints and wire-compatible with each other,
+  so the backend uses the narrowest standard proto scalar (`int32`, `uint32`,
+  `int64`, `uint64`); `float` versus `double` is **not** wire-compatible, so
+  changing `f32` to `float` is reported as a wire break by `xapic check
+  --against`.
+- Changing an alias on a field is always reported as an SDK-breaking change.
+- Width inference from ranges is deliberately not done: it would change
+  generated types whenever a range moves across a boundary.
+
+### Things that are not scalars
+
+| Earlier draft | Is actually | Where it lives now |
+|---|---|---|
+| `key`, `key global` | a field modifier on `string` | section 7 (`name: string key`) |
+| `unit` | union syntax for a payload-less variant | section 6 |
+| `Table<T>` | a container over a `table` | section 8a |
+| `mac ipv4 ipv6 ip cidr hex uuid` | `string` plus a `format` constraint | constraints (section 4), named via `type` aliases; the set of well-known names is a pending discussion |
+| `duration timestamp` | well-known structured values | pending the same discussion |
+
+Examples below still use `mac`, `ipv4` and `duration` as type names. Read them
+as placeholders for whatever that discussion decides.
 
 ## 4. Models and fields
 
@@ -233,7 +271,7 @@ union Source {
 ## 7. References and keys
 
 ```xapi
-model Port with Named { … }          // Named provides `name: key`
+model Port with Named { … }          // Named provides `name: string key`
 
 model TxRxPort {
   tx:  ref<Port>!
@@ -249,8 +287,9 @@ model TxRxPort {
   (for example a component name resolving within its own device).
 - Generated code exposes refs as a distinct type (`PortRef` in Go,
   `Ref[Port]` in Python, `xapi::Ref<Port>` in C++) with a `resolve(doc)` helper.
-- A `key` field is required and unique within its containing list. `key global`
-  is unique across the whole document. Uniqueness is checked by `validate()`.
+- `key` is a modifier on a `string` field: required and unique within the
+  containing list. `key global` is unique across the whole document.
+  Uniqueness is checked by `validate()`.
 
 ## 8. Generics
 
