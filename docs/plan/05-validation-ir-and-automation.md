@@ -104,7 +104,11 @@ every bug fixed in any runtime.
 Initial case groups: scalar formats, ranges and lengths, unions (tagged and
 untagged), refs (root scope, `in` scope, multi-target), keys (list and global),
 generics (`Pattern<T>` across types), checks, deprecations (warning surface),
-unknown fields, defaults on nested models and union payloads.
+unknown fields, defaults on nested models and union payloads, codec round
+trips (every instance encoded through JSON, protobuf and, for tables, Arrow,
+must decode to the same normalised JSON), table encodings (columnar JSON, row
+JSON, columnar protobuf, Arrow IPC with nulls, struct and list columns), and
+the Redis envelope.
 
 ## Automation surfaces
 
@@ -113,6 +117,8 @@ unknown fields, defaults on nested models and union payloads.
 | `ir.json` + `ir.schema.json` | `xapic ir` | Any tool; the generators; MCP servers; diff tools |
 | JSON Schema for instance documents | `xapic gen jsonschema` | CI validation of YAML configs without an SDK; editors |
 | OpenAPI 3.1 | `xapic gen openapi` | Redoc docs, existing OTG tooling |
+| Arrow schemas | `xapic gen arrow` | Data tools validating or producing table batches without xapi |
+| JSON encoding spec and Redis envelope | `spec/encoding-json.md`, `transport/` | Anyone implementing a peer in another language or a bus bridge |
 | HTML docs | `xapic gen docs` | Humans; rendered from IR so prose and rules never drift |
 | Breaking-change report | `xapic check --against` | PR gates, release notes |
 | Capability paths | IR field paths | Implementations advertise supported paths; clients can pre-check a config |

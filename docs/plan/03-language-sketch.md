@@ -62,6 +62,7 @@ sentence is the summary used by generators for short docstrings.
 | `key` | `string`, required, unique in containing list | `string` | `str` | `string` | `std::string` |
 | `key global` | as `key`, unique in the whole document | | | | |
 | `unit` | payload-less (only in unions) | empty message | marker class | empty struct | `std::monostate` |
+| `Table<T>` | columnar container, `T` must be a `table` | generated columnar message | `FlowMetricTable` | `FlowMetricTable` | `FlowMetricTable` |
 
 Formatted scalars are validated on `normalize()`/`validate()` and on decode.
 Their canonical string form is defined by the language (lower-case hex MAC,
@@ -293,6 +294,32 @@ model Counter<T> {
 This single feature removes the `x-field-pattern` meta-schema and hundreds of
 generated OTG messages.
 
+## 8a. Tables
+
+```xapi
+/// Per-flow traffic metrics.
+table FlowMetric {
+  name:       ref<Flow> key
+  transmit:   TransmitState
+  frames_tx:  u64 @unit(frames)
+  frames_rx:  u64 @unit(frames)
+  loss:       f64 {0..100} @unit(percent)
+  latency:    LatencyMetric          // struct column
+  tagged:     [MetricTag]            // list column
+}
+```
+
+- A `table` is a model restricted to column-legal types: scalars, enums, refs,
+  `duration`, `timestamp`, models made of column-legal fields, and lists of
+  those. Unions, maps and `json` columns are deferred to v0.2.
+- Columns are nullable unless `!`; `key` columns are non-null and unique
+  within the table.
+- `Table<T>` is the container type for rpc results and fields. Its encodings
+  (Arrow IPC, columnar JSON, row JSON, columnar protobuf) and the generated
+  table API are specified in `06-encodings-transports-and-tables.md`.
+- `stream Table<T>` on an rpc means a sequence of record batches; a bare
+  `Table<T>` means one batch set delivered whole.
+
 ## 9. Cross-field rules (`check`)
 
 ```xapi
@@ -333,7 +360,8 @@ Annotations are declared, not ad hoc. v0.1 built-ins:
 | `@id(n)` | fields, variants, enum values | Pin a wire id (escape hatch; the lockfile is preferred) |
 | `@proto_name("X")`, `@json_name("x")` | declarations, fields | Wire-name overrides for compatibility |
 | `@tagged` | unions | Emit an explicit `choice` discriminator |
-| `@http(POST "/config")` | rpc | HTTP binding |
+| `@http(POST "/config")` | rpc | HTTP binding (gRPC and Redis bindings are derived; `@redis(stream="…")` overrides the stream name) |
+| `@idempotent` | rpc | Transports may retry on timeout |
 | `@schema("otg.capabilities.v1")` | `json` fields | Declares what the opaque value must conform to |
 | `@known(EtherType)` | numeric fields and patterns | Associates a valued enum as a set of named constants |
 
@@ -354,7 +382,8 @@ service Otg {
   /// Merge a partial configuration.
   rpc update_config(ConfigUpdate) -> Warnings      @http(PATCH "/config")
   rpc set_control_state(ControlState) -> Warnings  @http(POST "/control/state")
-  rpc get_metrics(MetricsRequest) -> MetricsResponse
+  /// Per-flow metrics as a stream of record batches.
+  rpc get_metrics(MetricsRequest) -> stream Table<FlowMetric>
   /// Captured packets, streamed as they become available.
   rpc get_capture(CaptureRequest) -> stream CaptureChunk
 }
@@ -375,12 +404,15 @@ model ErrorItem {
 - `rpc name(Request?) -> Response [throws Err]`. Omitting `throws` uses the
   service default. `-> unit` for no response body.
 - `stream` on the request or response side means a sequence of messages.
-- Without `@http`, the default binding is `POST /<service>/<rpc>` with a JSON
-  body; gRPC is always generated.
+- Without `@http`, the default binding is `POST /<service>/<rpc>`; gRPC and
+  Redis bindings are always derived from the service and rpc names.
+- The encoding (JSON, protobuf, Arrow for tables) is chosen by the caller per
+  client or per call; it is not part of the declaration.
 - Backends: proto emits `service` and `google.api.http`; OpenAPI emits paths;
   SDKs emit a client with one method per rpc returning `(Response, error)` in
   Go, raising a typed exception in Python, and returning
-  `xapi::Result<Response, Error>` in C++.
+  `xapi::Result<Response, Error>` in C++, plus a handler interface and a
+  transport-neutral dispatcher for servers.
 
 ## 12. Wire ids and evolution
 

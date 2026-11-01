@@ -29,6 +29,13 @@ without reimplementing the compiler.
 7. **Prove it on real models.** Import OTG and InfraGraph, regenerate their
    protobuf with identical field numbers, and show the line-count and
    defect-count delta. Then propose the fixed models.
+8. **Transport-neutral RPC.** One service implementation serves HTTP, gRPC and
+   Redis. JSON, Protobuf and Arrow are codecs chosen per call, never baked into
+   generated types. Chunking and limits are transport concerns (no `x-stream`).
+9. **Big tables are a type.** `table` declarations compile to columnar
+   encodings (Arrow IPC first, columnar JSON and columnar protobuf as
+   dependency-free fallbacks) with streaming, DataFrame interop and the same
+   validation as everything else.
 
 ## Non-goals (for v1)
 
@@ -60,8 +67,10 @@ Deliverable: these documents, with the decisions below confirmed.
 - Diagnostics with file:line:col and a fix hint (openapiart issue #460 is
   the anti-pattern).
 
-Exit: hand-written xapi for OTG `Flow`, `Flow.Header`, `Device.Ethernet` and
-the whole of InfraGraph checks clean and produces IR matching its schema.
+Exit: hand-written xapi for OTG `Flow`, `Flow.Header`, `Device.Ethernet`,
+`table FlowMetric` and the whole of InfraGraph checks clean and produces IR
+matching its schema. `spec/encoding-json.md` and `spec/transport.md` are
+written in this phase because the IR must carry what they need.
 
 ### Phase 2 — Protobuf and OpenAPI backends, and the importer
 
@@ -69,6 +78,8 @@ the whole of InfraGraph checks clean and produces IR matching its schema.
   reserved ranges, optional `buf.validate` annotations, gRPC services,
   `google.api.http` bindings from `@http`.
 - `gen/openapi`: OpenAPI 3.1 for documentation and for existing OTG tooling.
+- `gen/arrow`: Arrow schema (as IPC schema message and as JSON) for every
+  `table`, so non-xapi consumers can validate record batches.
 - `tools/import-openapiart`: openapiart-flavoured OpenAPI → xapi, seeding the
   lockfile from `x-field-uid` and `x-reserved-field-uids`.
 - Wire-compatibility check: import `open-traffic-generator/models`, emit proto,
@@ -80,25 +91,34 @@ Line counts of imported xapi vs. source YAML recorded in `docs/plan/metrics.md`.
 
 ### Phase 3 — Python SDK and runtime
 
-- `runtime/python` (`xapi-runtime`): error types, JSON codec, proto bridge,
-  HTTP and gRPC client bases.
-- `gen/python`: typed classes, unions, refs, `validate()`, `to_json()`,
-  `from_json()`, `to_proto()`, `from_proto()`, service clients.
-- Conformance suite runner for Python.
+- `runtime/python` (`xapi-runtime`): error types; `Codec` implementations
+  for JSON, protobuf and Arrow; `Transport` implementations for HTTP (httpx),
+  gRPC (grpcio, including the `grpc+json` codec) and Redis (redis-py, Streams
+  with consumer groups); the shared dispatcher for servers.
+- `gen/python`: typed classes, unions, refs, tables, `validate()`,
+  `normalize()`, codec entry points, service clients and handler interfaces.
+- Conformance suite runner for Python, including codec round trips and table
+  encodings.
 
 Exit: conformance suite green; generated OTG client executes the snappi
-quickstart flow against ixia-c in CI.
+quickstart flow against ixia-c over HTTP and gRPC; the same client talks to a
+generated Python server over Redis in CI; `get_metrics` streams Arrow batches
+into a pandas DataFrame.
 
 ### Phase 4 — Go SDK and runtime
 
-Same shape as Phase 3. Exit: conformance green; `go vet` and `staticcheck`
-clean on generated code; gosnappi quickstart equivalent runs against ixia-c.
+Same shape as Phase 3 with `net/http`, `google.golang.org/grpc`, `go-redis`
+and `apache/arrow-go`. Exit: conformance green; `go vet` and `staticcheck`
+clean on generated code; gosnappi quickstart equivalent runs against ixia-c;
+Go client interoperates with the Python server over all three transports.
 
 ### Phase 5 — C++ SDK and runtime
 
 C++20, header plus source per package, `std::optional`, `std::variant`,
-`std::expected`-style results. Exit: conformance green under GCC and Clang
-with `-Wall -Wextra -Werror`.
+`std::expected`-style results. Transports: gRPC (native), HTTP (libcurl or
+cpp-httplib behind a CMake option), Redis (redis-plus-plus). Arrow via Arrow
+C++ or nanoarrow behind a CMake option. Exit: conformance green under GCC and
+Clang with `-Wall -Wextra -Werror`; cross-language interop with Python and Go.
 
 ### Phase 6 — OTG-next and InfraGraph-next proposals
 
@@ -119,7 +139,8 @@ instance documents, lint rules (`xapic lint`), an MCP server over the IR.
 xapi/
   README.md
   docs/plan/                 planning documents (this set)
-  spec/                      grammar.ebnf, semantics.md, ir.schema.json, lock.md
+  spec/                      grammar.ebnf, semantics.md, ir.schema.json, lock.md,
+                             encoding-json.md, encoding-arrow.md, transport.md
   cmd/xapic/                 CLI entry point
   internal/
     lexer/ parser/ ast/      front end
@@ -127,9 +148,12 @@ xapi/
     lock/                    lockfile load, assign, reserve
     ir/                      IR builder and JSON emitter
   gen/
-    proto/ openapi/ python/ golang/ cpp/   backends (template + post-format)
+    proto/ openapi/ arrow/ jsonschema/ python/ golang/ cpp/   backends
   runtime/
-    python/ go/ cpp/         small hand-written runtime libraries
+    python/ go/ cpp/         hand-written runtime libraries: errors, codecs
+                             (json, protobuf, arrow), transports (http, grpc,
+                             redis), dispatcher, table containers
+  transport/                 xapi.transport.redis envelope model (dogfooded)
   tools/import-openapiart/   OpenAPI(openapiart) → xapi
   conformance/               language-neutral validation test cases
   examples/
@@ -153,3 +177,7 @@ say otherwise.
 | D7 | Constraint expression language | **Small xapi expression subset** that compiles to native code in each target and to CEL for `buf.validate` | Native code keeps C++ free of a CEL runtime; CEL export keeps protovalidate users happy. |
 | D8 | Import strategy for OTG and InfraGraph | **Import first for wire compatibility, then redesign** | Separates "is the compiler correct" from "is the model good". |
 | D9 | CLI and package names | `xapic` binary, `xapi` Go module, `xapi-runtime` Python package, `xapi` C++ namespace | Short, unambiguous, matches the org name. |
+| D10 | JSON encoding of 64-bit integers | **JSON numbers**, with an `int64_as_string` codec option | Matches OTG today and every non-JavaScript consumer; protojson's string rule exists only for JavaScript. |
+| D11 | Primary encoding for `Table<T>` | **Arrow IPC stream**, with columnar JSON and columnar protobuf as dependency-free fallbacks | Zero-copy, streamable in record batches, native in Python, Go and C++, direct path to pandas, polars, DuckDB and Parquet. Row-JSON kept as a compatibility option. |
+| D12 | Redis protocol | **Redis Streams with consumer groups** for request/reply and server streams; pub/sub only for events | Streams give acknowledgement, replay after reconnect and horizontal scaling of servers; lists and pub/sub give none of those. |
+| D13 | Codec and transport selection | **Per client or per call**, never per generated type | Keeps generated types pure data; the same service object serves all transports. |

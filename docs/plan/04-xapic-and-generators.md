@@ -24,6 +24,20 @@
    `buf format`, `black`, `gofmt`, `clang-format`. Output is committed to the
    consuming repo, like protoc output, and is reproducible byte for byte.
 
+Generated code is pure data types plus thin clients and handler interfaces.
+Everything that touches bytes or sockets lives in the hand-written runtime
+per language, behind two interfaces:
+
+```
+Codec:      encode(value) -> bytes, decode(bytes, type) -> value      json | protobuf | arrow
+Transport:  call(rpc, request bytes) -> response bytes, stream_call, serve(dispatcher)   http | grpc | redis
+```
+
+The dispatcher (generated once per service) maps an incoming rpc name to the
+handler method, decodes with the negotiated codec, runs `validate()` when the
+server asks for it, and encodes the result or the `Error`. See
+`06-encodings-transports-and-tables.md` for the codec and transport specs.
+
 ## CLI
 
 ```
@@ -31,7 +45,7 @@ xapic check   [--frozen] [--against <git-ref>]   # parse, check, lockfile, break
 xapic fmt     [--check]                          # canonical formatting
 xapic lock                                       # update xapi.lock
 xapic ir      -o build/ir.json                   # canonical IR
-xapic gen     proto|openapi|python|go|cpp|docs|jsonschema -o <dir>
+xapic gen     proto|openapi|arrow|jsonschema|python|go|cpp|docs -o <dir>
 xapic lint                                       # model-guide rules (opt-in sets)
 xapic import  openapiart <openapi.yaml|dir> -o <dir>   # migration
 ```
@@ -83,6 +97,7 @@ values = { up = 1, down = 2 }
 | `///` docs | leading comments on every element |
 | reserved ids | `reserved n, m;` |
 | `service` | `service`, `stream` keywords, `google.api.http` annotations from `@http` |
+| `table T` / `Table<T>` | columnar message `TTable { repeated C col; bytes col_nulls; … }` plus `TTableChunk` for streams; alternatively `bytes arrow_ipc` when the Arrow codec is negotiated |
 
 Compatibility check in CI: `buf breaking --against` the published proto of the
 imported model.
@@ -110,7 +125,11 @@ Every generated SDK offers the same operations with language-native spelling:
 | refs | `Ref[Port]` with `.resolve(doc)` | `PortRef` string type with `Resolve(doc)` | `xapi::Ref<Port>` |
 | unions | `.kind` plus typed accessors | sealed interface, one struct per variant | `std::variant` plus `kind()` |
 | errors | `xapi.ValidationError` with `.items[{path, code, message}]` | `*xapi.ValidationError` implementing `error`, `Unwrap` | `xapi::ValidationError` |
-| clients | `OtgClient(http=…)` or `grpc=…`; sync and async | `OtgClient` interface, HTTP and gRPC impls, `context.Context` first | `xapi::otg::Client` over gRPC; HTTP via libcurl optional |
+| clients | `OtgClient(transport)`; sync and async | `OtgClient` with `context.Context` first | `xapi::otg::Client` |
+| transports | `HttpTransport` (httpx), `GrpcTransport` (grpcio), `RedisTransport` (redis-py) | `xapihttp`, `xapigrpc`, `xapiredis` packages | gRPC native; HTTP and Redis behind CMake options |
+| codecs | `JsonCodec`, `ProtoCodec`, `ArrowCodec` | same | same |
+| tables | `FlowMetricTable` with `.rows()`, `.column()`, `.to_arrow()`, `.to_pandas()` | `FlowMetricTable` with typed column accessors, `ToArrow()` | `FlowMetricTable` with spans, `to_arrow()` |
+| servers | `OtgHandler` protocol + `serve(handler, transport)` | `OtgHandler` interface + `Serve` | `OtgHandler` abstract class + `serve` |
 
 Validation error codes are a closed enum shared by all runtimes (`required`,
 `range`, `length`, `pattern`, `unique`, `unknown_ref`, `union_multiple`,
@@ -225,7 +244,11 @@ suspects is wrong (uid gaps, duplicate descriptions, prose rules containing
 - **Compile tests**: generated Python is imported and `mypy --strict` clean;
   Go is `go build` and `go vet` clean; C++ compiles under GCC and Clang with
   warnings as errors; proto passes `buf lint` and `buf breaking`.
-- **Conformance suite** (see 05) runs the same cases through every runtime.
+- **Conformance suite** (see 05) runs the same cases through every runtime,
+  including codec round trips (JSON ↔ protobuf ↔ Arrow produce identical
+  normalised JSON) and table encodings.
+- **Interop matrix**: every client language against every server language
+  over every transport, with a fixed set of rpcs including a streamed table.
 - **End-to-end**: the generated OTG Python and Go clients run a traffic test
   against ixia-c in CI (ports, one flow, metrics), proving real-world
   interoperability with existing implementations.

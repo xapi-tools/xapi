@@ -4,7 +4,9 @@
 RPCs. **xapic** is its compiler: it checks a model, assigns stable wire ids,
 emits a machine-readable intermediate representation (IR), and generates
 Protobuf, OpenAPI, Python, Go and C++ artifacts that read like code a careful
-engineer would write by hand in each language.
+engineer would write by hand in each language. Generated services are
+transport-neutral (HTTP, gRPC, Redis) with JSON, Protobuf and Arrow encodings,
+and big result sets are first-class `table` types rather than lists of rows.
 
 xapi exists because the two mainstream options force a bad trade:
 
@@ -34,3 +36,4 @@ Planning. Nothing is implemented yet. Start with
 | [03-language-sketch.md](docs/plan/03-language-sketch.md) | The xapi language: syntax, types, constraints, unions, refs, generics, services |
 | [04-xapic-and-generators.md](docs/plan/04-xapic-and-generators.md) | Compiler architecture, lockfile, per-language idiom contracts |
 | [05-validation-ir-and-automation.md](docs/plan/05-validation-ir-and-automation.md) | Validation semantics, the IR, conformance suite, automation surfaces |
+| [06-encodings-transports-and-tables.md](docs/plan/06-encodings-transports-and-tables.md) | JSON, Protobuf and Arrow codecs; HTTP, gRPC and Redis transports; the `table` type for big data |

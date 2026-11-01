@@ -42,6 +42,8 @@ Severity: **S** structural (changes the wire or the model shape),
 | B8 | Q | Implementations reject unsupported features only at `set_config` time; there is no model-level capability discovery. | OTG guide and vendor READMEs. | Model-level: `rpc get_capabilities() -> Capabilities`; language-level: every field has a stable IR path, so `Capabilities` can list supported paths. |
 | B9 | Q | `Device.Ethernet.mac` is optional but mandatory unless `connection` is `simulated_link`. Stated twice in prose. | `device/ethernet.yaml`. | `check connection is simulated_link \|\| mac != null : "mac is required unless the connection is a simulated link"` |
 | B10 | Q | `name` uniqueness scope is a string `format` (`global-unique`, `list-unique`) and not enforced historically. | openapiart `MODELGUIDE.md`. | `name: key` (unique in containing list) or `name: key global`. |
+| B11 | S | Metrics and states are row-oriented lists of objects (`flow_metrics: [FlowMetric]`). Every key is repeated per row, nothing streams, DataFrame conversion is the caller's problem, and the gRPC 4 MB limit is what produced `x-stream`. | `result/metrics.yaml`, `api/api.yaml`. | `table FlowMetric` and `rpc get_metrics(...) -> stream Table<FlowMetric>`; Arrow IPC batches on the wire, row-JSON kept as a codec option for old clients (see 06). |
+| B12 | T | The API is bound to one transport style (HTTP paths with gRPC derived by the generator). There is no way to serve the same model over a message bus. | `api/api.yaml`. | Transport-neutral services: HTTP, gRPC and Redis from one `service` declaration (see 06). |
 
 ## Part C — InfraGraph-specific flaws
 
@@ -62,6 +64,7 @@ are easy to see in full.
 | C10 | Q | The query API is an ad hoc filter object; later work adds JSONPath strings. Shortest-path endpoints "should be an EXACT match" in prose. | `query.yaml`, PR #88. | Typed `NodeSelector` union (`id: NodeId`, `slice: Endpoint`, `attributes: AttributeFilter`), so exactness is a type not a sentence. |
 | C11 | T | Every RPC is `POST` with `x-stream: client`, including `get_graph`. | `api.yaml`. | `rpc get_graph(GraphRequest) -> Graph @http(GET "/graph")`; no stream flag. |
 | C12 | T | `$ref :` with a space before the colon in `graph.yaml`; `Graph.Type` is unreferenced; uid gaps. | `graph.yaml`, `component.yaml` (uids 4 → 10). | `xapic fmt` and `xapic lint` (unused type is a warning). |
+| C13 | S | The expanded graph, which can reach hundreds of thousands of nodes and edges, is returned either as the compact `Infrastructure` plus annotations or as a networkx node-link document serialised to YAML inside a JSON string. Neither streams, and the second is opaque to every non-Python consumer. | `graph.yaml` (`GraphResponseContent.networkx: string`). | `get_graph` returns `Table<Node>` and `Table<GraphEdge>` as Arrow batches; networkx, pandas and DuckDB load them directly (see 06). |
 
 ## Part D — What is right and should be preserved
 
