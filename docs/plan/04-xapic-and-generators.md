@@ -15,7 +15,7 @@
    flattening. Produces a closed set of concrete types.
 
 3. **Check.** Type rules (constraint applicability, default type matches field
-   type, `ref<T>` target has exactly one `key`, `check` expressions type-check,
+   type, `ref[T]` target has exactly one `key`, `check` expressions type-check,
    required fields have no default, docs present, annotation schemas).
 
 4. **Lock.** Load `xapi.lock`; assign ids to new elements; move deleted ids to
@@ -78,7 +78,7 @@ values = { up = 1, down = 2 }
 - New elements get `max(existing, reserved) + 1`.
 
 - Generic instantiations are keyed by their mangled name
-  (`otg.flow.Pattern<mac>`), so each instantiation keeps its own stable numbers.
+  (`otg.flow.Pattern[mac]`), so each instantiation keeps its own stable numbers.
 
 - The importer seeds the lockfile from `x-field-uid` and
   `x-reserved-field-uids`, which is how wire compatibility with existing
@@ -92,20 +92,21 @@ values = { up = 1, down = 2 }
 | `model` | `message`; mixin fields inlined |
 | optional scalar field | `optional T f = n;` |
 | required field | plain field plus `buf.validate.field.required = true` when `--validate` is on |
-| `[T]` | `repeated` (wrapped in a synthesised message when inside a `oneof`) |
-| `{K: V}` | `map<K,V>` (wrapped inside a `oneof`) |
+| `list[T]` | `repeated` (wrapped in a synthesised message when inside a `oneof`) |
+| `map[K, V]` | `map<K,V>` (wrapped inside a `oneof`) |
 | `union` | `oneof` named after the union; `@tagged` adds `Choice choice = 1;` enum, preserving OTG layout |
 | unit variant | synthesised empty message `Foo.Auto {}` |
 | `enum` | nested or top-level enum with `_UNSPECIFIED = 0` and value prefix |
 | `i8/i16/u8/u16` | `int32`/`uint32` with range annotations and a comment |
 | `mac ipv4 …` | `string` with format comment and `buf.validate` pattern |
 | `duration timestamp json` | well-known types |
-| `ref<T>` | `string` with a leading comment `// ref<T>` |
+| `ref[T]` | `string` with a leading comment `// ref[T]` |
 | constraints | comments always; `buf.validate` options with `--validate` |
 | `///` docs | leading comments on every element |
 | reserved ids | `reserved n, m;` |
 | `service` | `service`, `stream` keywords, `google.api.http` annotations from `@http` |
-| `table T` / `Table<T>` | columnar message `TTable { repeated C col; bytes col_nulls; … }` plus `TTableChunk` for streams; alternatively `bytes arrow_ipc` when the Arrow codec is negotiated |
+| `table[T]` | generated `TTable` message: one packed `repeated` per column with the row model's ids, `bytes <col>_nulls` validity bitmaps at `1000 + id`; rpcs carrying it become streaming methods (one chunk per message) |
+| `list[T]` / `map[K, V]` at an rpc boundary | synthesised wrapper message; the method is a streaming method, one chunk per message |
 
 Compatibility check in CI: `buf breaking --against` the published proto of the
 imported model.
@@ -239,9 +240,9 @@ Maps openapiart conventions back to language features:
 | `choice` + `x-enum` + sibling properties | `union` with `@tagged` |
 | `x-field-uid`, `x-reserved-field-uids` | lockfile entries |
 | `x-include` | `mixin` |
-| `x-constraint: [/components/schemas/Port/properties/name]` | `ref<Port>` |
+| `x-constraint: [/components/schemas/Port/properties/name]` | `ref[Port]` |
 | `x-status: deprecated/under_review/obsolete` | `@deprecated`, `@status(...)` |
-| `x-field-pattern` | `Pattern<T>` family with `@proto_name` pinning legacy names |
+| `x-field-pattern` | `Pattern[T]` family with `@proto_name` pinning legacy names |
 | `x-constants` | valued `enum` plus `@known` |
 | `format: global-unique / list-unique` | `key global` / `key` |
 | `minimum/maximum/minLength/maxLength/minItems/pattern` | brace constraints |

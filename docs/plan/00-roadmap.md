@@ -40,10 +40,11 @@ without reimplementing the compiler.
    Redis. JSON, Protobuf and Arrow are codecs chosen per call, never baked into
    generated types. Chunking and limits are transport concerns (no `x-stream`).
 
-9. **Big tables are a type.** `table` declarations compile to columnar
-   encodings (Arrow IPC first, columnar JSON and columnar protobuf as
-   dependency-free fallbacks) with streaming, DataFrame interop and the same
-   validation as everything else.
+9. **Big tables are a collection.** `table[T]` is the column-major layout of
+   a sequence of flat rows: columnar JSON and columnar protobuf with no extra
+   dependency, Arrow IPC when negotiated, chunked in transit by every
+   transport, with DataFrame interop and the same validation as everything
+   else.
 
 ## Non-goals (for v1)
 
@@ -84,7 +85,7 @@ Deliverable: these documents, with the decisions below confirmed.
   the anti-pattern).
 
 Exit: hand-written xapi for OTG `Flow`, `Flow.Header`, `Device.Ethernet`,
-`table FlowMetric` and the whole of InfraGraph checks clean and produces IR
+`table[FlowMetric]` and the whole of InfraGraph checks clean and produces IR
 matching its schema. `spec/encoding-json.md` and `spec/transport.md` are
 written in this phase because the IR must carry what they need.
 
@@ -97,7 +98,7 @@ written in this phase because the IR must carry what they need.
 - `gen/openapi`: OpenAPI 3.1 for documentation and for existing OTG tooling.
 
 - `gen/arrow`: Arrow schema (as IPC schema message and as JSON) for every
-  `table`, so non-xapi consumers can validate record batches.
+  model used as a `table[T]`, so non-xapi consumers can validate record batches.
 
 - `tools/import-openapiart`: openapiart-flavoured OpenAPI → xapi, seeding the
   lockfile from `x-field-uid` and `x-reserved-field-uids`.
@@ -250,7 +251,7 @@ Recommendation: **JSON numbers**, with an `int64_as_string` codec option
 
 Matches OTG today and every non-JavaScript consumer; protojson's string rule exists only for JavaScript.
 
-**D11. Primary encoding for `Table<T>`**
+**D11. Primary encoding for `table[T]`**
 
 Recommendation: **Arrow IPC stream**, with columnar JSON and columnar protobuf as dependency-free fallbacks
 

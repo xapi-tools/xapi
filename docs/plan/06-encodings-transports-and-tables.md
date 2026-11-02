@@ -62,8 +62,8 @@ Rules that hold for every codec:
 | union | object with exactly one key (the variant); `@tagged` adds `"choice": "variant"` |
 | unit variant | `{"auto": {}}` |
 | `[T]` | array; `{K: V}` object with keys stringified |
-| `ref<T>` | string |
-| `Table<T>` | columnar object (section 3), or row array with the `rows` codec option |
+| `ref[T]` | string |
+| `table[T]` | object of arrays (section 3); `list[T]` is the row form |
 
 Field order on encode is source order, so diffs of encoded documents are
 stable. Decoders accept any order.
@@ -108,7 +108,9 @@ All three transports implement one runtime interface per language
   `stream` rpcs, sends chunks. There is no `x-stream` flag on the model; a
   unary rpc with a big payload is still unary to the caller.
 
-- Tables: a `stream Table<T>` rpc sends one record batch per message.
+- Collections: an rpc whose top-level request or response is a `list`, `map`
+  or `table` (or a union of them) is generated as a streaming method; each
+  message is one chunk, a complete value of the same type (sketch, 8a).
 
 ### Redis
 
@@ -172,87 +174,87 @@ It cannot stream, and over gRPC it hits the 4 MB limit, which is where
 `x-stream` came from. InfraGraph has the same problem in reverse: an expanded
 graph of 100k nodes is returned as a YAML string inside a JSON string.
 
-### The `table` declaration
+### `table[T]`
 
 ```kotlin
 /// Per-flow traffic metrics.
-table FlowMetric {
-  name:            ref<Flow> key
-  transmit:        TransmitState
-  frames_tx:       u64 @unit(frames)
-  frames_rx:       u64 @unit(frames)
-  bytes_tx:        u64 @unit(bytes)
-  bytes_rx:        u64 @unit(bytes)
-  frames_tx_rate:  f64 @unit(fps)
-  loss:            f64 {0..100} @unit(percent)
-  latency:         LatencyMetric          // struct column
-  tagged:          [MetricTag]            // list column
+model FlowMetric {
+  name:      ref[Flow] key
+  frames_tx: uint!  @unit(frames)
+  loss:      float{0..100} @unit(percent)
+  state:     TransmitState
 }
 
-service Otg {
-  rpc get_metrics(MetricsRequest) -> stream Table<FlowMetric>
+union MetricsResponse {
+  flow: table[FlowMetric]
+  port: table[PortMetric]
 }
+
+rpc get_metrics(MetricsRequest) -> MetricsResponse
 ```
 
-A `table` is a model with restrictions that guarantee a columnar layout:
+A table is the column-major layout of a sequence of flat rows; `list[T]` is
+the row-major layout of the same values. The model is ordinary; flatness
+(primitives, aliases, enums, refs, `duration`, `timestamp` only) is checked
+where `table[T]` is used. Columns are nullable unless `!` or `key`; a `key`
+column is unique across the table. The language-level rules, the JSON and
+protobuf wire forms and the chunking rule are in the language sketch, section
+8a; this document covers the codecs and the Arrow path.
 
-- Column types: scalars, enums, refs, `duration`, `timestamp`, models whose
-  fields are themselves column-legal (struct columns), lists of column-legal
-  types. No unions, no `json`, no maps in v1 (Arrow can do all three; they are
-  deferred, not refused).
-
-- Columns are nullable unless `!`; `key` columns are non-null and unique.
-
-- `Table<T>` is a built-in generic container usable only where `T` is a
-  `table`. It is the type of rpc results and of fields (`metrics: Table<FlowMetric>`).
-
-### Encodings of `Table<T>`
+### Encodings of `table[T]`
 
 | Encoding | Shape | When |
 |---|---|---|
-| **Arrow IPC stream** (primary) | Record batches with a schema derived mechanically from the table declaration | Anything above a few thousand rows; all `stream Table<T>` rpcs by default; Redis and HTTP and gRPC alike |
-| **Columnar JSON** | `{"schema": "otg.FlowMetric", "rows": 3, "columns": {"name": [...], "frames_tx": [...]}}`, nulls as `null`, struct columns as nested columnar objects | Human-readable, automation-friendly, dependency-free; default for the JSON codec |
-| **Row JSON** | `[{"name": "f1", ...}, ...]` | Compatibility with existing OTG consumers; codec option `rows` |
-| **Columnar protobuf** | Generated message with one `repeated` field per column plus a null bitmap per nullable column | gRPC without an Arrow dependency; still 10 to 50 times fewer allocations than repeated row messages |
+| **Columnar JSON** | object of arrays, `null` for a missing cell, all-null columns may be omitted | the JSON codec, always |
+| **Columnar protobuf** | generated `TTable` message: one packed `repeated` per column with the row model's ids, plus a validity bitmap (`bytes`, bit per row) at `1000 + id` for each nullable column that has nulls | the protobuf codec, always |
+| **Arrow IPC** | record batches with the schema below; Arrow validity bitmaps carry the nulls | when negotiated; the fast path for large tables |
 
-The Arrow mapping (xapi → Arrow): `bool`→`bool`; `i8..i64`/`u8..u64`→ matching
-width ints; `f32`/`f64`→`float`/`double`; `string`→`utf8` (or `large_utf8`
-above 2 GB per batch); `bytes`→`binary`; `mac`→`fixed_size_binary(6)`;
-`ipv4`→`fixed_size_binary(4)`; `ipv6`→`fixed_size_binary(16)`;
-`ip`/`cidr`/`uuid`/`hex`→`utf8` (uuid as `fixed_size_binary(16)` is a codec
-option); enum→`dictionary<int32, utf8>`; `ref<T>`→`utf8` with field
-metadata `xapi.ref=T`; `duration`→`duration(ns)`; `timestamp`→`timestamp(ns, UTC)`;
-model→`struct`; `[T]`→`list<T>`. Table-level metadata carries the xapi type
-name and project version so a consumer can validate without the IR.
+Row layout for the same data is spelled `list[T]` in the model, not chosen by
+a codec option. A JSON decoder accepts either layout because an array and an
+object cannot be confused, so a row-oriented producer and a columnar consumer
+interoperate.
 
-Batch size default 64k rows or 4 MB, whichever first; body compression
-`zstd` on by default for Redis and HTTP, off for gRPC (which compresses
-itself).
+The Arrow mapping (xapi → Arrow): `bool`→`bool`; `int` and its aliases → the
+pinned width or `int64`; `uint` and aliases → unsigned widths or `uint64`;
+`float`→`double`, `f32`→`float`; `string`→`utf8` (`large_utf8` above 2 GB per
+batch); `bytes`→`binary`; enum→`dictionary<int32, utf8>`; `ref[T]`→`utf8`
+with field metadata `xapi.ref=T`; `duration`→`duration(ns)`;
+`timestamp`→`timestamp(ns, UTC)`. Formatted string aliases such as a future
+`Mac` may pin `fixed_size_binary` through `@repr`. Table-level metadata
+carries the xapi type name and project version so a consumer can validate
+without the IR.
+
+Chunk size defaults to 64k rows or 4 MB, whichever comes first, overridable
+with `@chunk(rows=…)`; body compression `zstd` is on by default for Redis and
+HTTP, off for gRPC (which compresses itself).
 
 ### Generated table API
 
-Every language gets a `Table` type with the same operations:
+Every language gets a container type per table model with the same
+operations:
 
 | Operation | Python | Go | C++ |
 |---|---|---|---|
 | build | `FlowMetricTable.from_rows([...])`, `.append(row)` | `NewFlowMetricTable()`, `.Append(row)` | `FlowMetricTable::from_rows`, `.append` |
-| read | `.rows()` iterator of typed rows, `.column("frames_tx")` typed array | `.Rows()`, `.FramesTx() []uint64` | `.rows()`, `.frames_tx()` span |
+| read | `.rows()` iterator of typed rows, `.frames_tx` typed column | `.Rows()`, `.FramesTx() []uint64`, `.Loss() []*float64` | `.rows()`, `.frames_tx()` span |
 | validate | `.validate()` (keys unique, ranges, refs) | `.Validate()` | `.validate()` |
+| convert | `.to_list()` / `FlowMetricTable.from_list()` | `.ToList()` / `FromList()` | same |
 | Arrow | `.to_arrow()` → `pyarrow.Table`, `.from_arrow()` | `.ToArrow()` → `arrow.Record`, `.FromArrow()` | `to_arrow()` → `std::shared_ptr<arrow::Table>` |
 | frames | `.to_pandas()`, `.to_polars()` (via Arrow, zero-copy where possible) | — | — |
-| JSON | `.to_json(columnar=True)` | `MarshalJSON` columnar | `to_json()` |
+| chunks | iterate a chunked response, or `.collect()` | `Recv()` loop, or `Collect()` | same |
 
 Python and C++ Arrow support is mature (`pyarrow`, Arrow C++). For Go,
 `github.com/apache/arrow-go` is used; for very small C++ deployments the
 `nanoarrow` C library is an alternative the C++ runtime can target with the
-same generated schema.
+same generated schema. Arrow is optional in every runtime; the columnar
+protobuf and columnar JSON forms need no dependency.
 
 ### Moving tables around, end to end
 
 | Hop | Mechanism |
 |---|---|
 | Implementation → controller (same host, in process) | Arrow record batches in memory, zero copy |
-| Controller → client over gRPC | `stream Table<T>`, one batch per message |
+| Controller → client over gRPC | `stream table[T]`, one batch per message |
 | Controller → client over HTTP | `application/vnd.apache.arrow.stream` body, or columnar JSON when asked |
 | Controller → many consumers over Redis | One `XADD` per batch on a results stream; consumers read with `XREAD`/consumer groups |
 | Client → analysis | `.to_arrow()` then pandas, polars, DuckDB; Parquet via Arrow for at-rest storage |
@@ -260,12 +262,12 @@ same generated schema.
 
 ### Consequences for OTG and InfraGraph
 
-- OTG `Metrics.Response`, `States.Response` and capture metadata become
-  `Table<...>` declarations; the row-JSON codec option keeps existing clients
-  working while new clients get streaming and DataFrames for free.
+- OTG `Metrics.Response` and `States.Response` become unions of `table[T]`
+  variants; a `list[T]` form can be kept alongside for existing clients during
+  migration, while new clients get chunking and DataFrames for free.
 
-- InfraGraph's expanded graph becomes two tables, `Table<Node>` and
-  `Table<GraphEdge>`, returned by `get_graph` and accepted by `set_graph`, which
+- InfraGraph's expanded graph becomes two tables, `table[Node]` and
+  `table[GraphEdge]`, returned by `get_graph` and accepted by `set_graph`, which
   also fixes the lossy round trip noted in PR #88. `networkx` import is a
   one-liner from Arrow.
 
@@ -275,7 +277,7 @@ same generated schema.
   for that language; a new conformance group covers codec round trips and
   table encodings. New decisions D10 to D12.
 
-- Language: `table` declaration, `Table<T>` built-in, `@idempotent`,
+- Language: `table[T]` collection, `@idempotent`, `@chunk`,
   `@redis(stream="...")` optional override; `stream` semantics clarified.
 
 - Generators: runtime `Codec` and `Transport` interfaces; Arrow schema

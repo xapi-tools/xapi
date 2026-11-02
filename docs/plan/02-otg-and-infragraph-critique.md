@@ -37,7 +37,7 @@ References are strings with an `x-constraint` yamlpath. SDKs did not enforce the
 
 - Evidence: `Ethernet.Connection.port_name`, `Bgp.V4Interface.ipv4_name`, `Flow.TxRx.Port.tx_name`.
 
-- xapi fix: `ref<Port>`, `ref<Ipv4 | Ipv4Loopback | Dhcpv4Client>`, `[ref<Flow>]`. Checked by every SDK; the type, not the name, says it is a reference.
+- xapi fix: `ref[Port]`, `ref[Ipv4 | Ipv4Loopback | Dhcpv4Client]`, `list[ref[Flow]]`. Checked by every SDK; the type, not the name, says it is a reference.
 
 ### A4 (structural)
 
@@ -53,7 +53,7 @@ Normative rules live in descriptions ("MUST be unique", "MUST exist in", "MUST b
 
 - Evidence: `Device.EthernetBase.mac`, `Instance.device`, `Infrastructure.Endpoint.instance`.
 
-- xapi fix: `key`, `ref<T>`, and `check <expr> : "message"` cross-field rules.
+- xapi fix: `key`, `ref[T]`, and `check <expr> : "message"` cross-field rules.
 
 ### A6 (quality)
 
@@ -102,7 +102,7 @@ Packet-field patterns are a meta-schema (`x-field-pattern` with `format`, `lengt
 
 - Evidence: `ethernet.yaml`; generated `otg.proto`.
 
-- xapi fix: Generic `Pattern<T>`, `AutoPattern<T>`, `MetricPattern<T>` unions. One definition; monomorphised by the compiler with stable names (`@proto_name` keeps existing names for wire compatibility).
+- xapi fix: Generic `Pattern[T]`, `AutoPattern[T]`, `MetricPattern[T]` unions. One definition; monomorphised by the compiler with stable names (`@proto_name` keeps existing names for wire compatibility).
 
 ### B2 (quality)
 
@@ -146,10 +146,10 @@ Deep nesting forced by the guide rule "avoid simple datatypes at top level". It 
 
 ### B7 (quality)
 
-Metric and state queries take names as `[string]` with the referential rule in prose.
+Metric and state queries take names as `list[string]` with the referential rule in prose.
 
 - Evidence: `Metrics.Request.Flow.flow_names`.
-- xapi fix: `[ref<Flow>]`.
+- xapi fix: `list[ref[Flow]]`.
 
 ### B8 (quality)
 
@@ -180,7 +180,7 @@ Metrics and states are row-oriented lists of objects (`flow_metrics: [FlowMetric
 
 - Evidence: `result/metrics.yaml`, `api/api.yaml`.
 
-- xapi fix: `table FlowMetric` and `rpc get_metrics(...) -> stream Table<FlowMetric>`; Arrow IPC batches on the wire, row-JSON kept as a codec option for old clients (see 06).
+- xapi fix: `table[FlowMetric]` returned by `get_metrics`, chunked in transit by every transport; Arrow IPC when negotiated; a `list[T]` form can be kept for old clients (see 06).
 
 ### B12 (tooling)
 
@@ -202,7 +202,7 @@ Endpoints and node names are strings carrying an undocumented, inconsistent mini
 
 - Evidence: `edge.yaml`, `annotation.yaml`, `query.yaml`, `docs/src/model.md`, `schema/example.yaml`.
 
-- xapi fix: Structured `Endpoint { instance: ref<Instance>, index: Slice, component: ref<Component>, component_index: Slice }` with `model Slice { start: u32 = 0, stop: u32 }`. A compact string form, if wanted, is a documented `@compact` serialisation of that structure, parsed and validated by the runtime.
+- xapi fix: Structured `Endpoint { instance: ref[Instance], index: Slice, component: ref[Component], component_index: Slice }` with `model Slice { start: u32 = 0, stop: u32 }`. A compact string form, if wanted, is a documented `@compact` serialisation of that structure, parsed and validated by the runtime.
 
 ### C2 (structural)
 
@@ -218,7 +218,7 @@ Component kinds are empty placeholder messages (`Component.Cpu`, `Component.Xpu`
 
 - Evidence: `component.yaml`.
 
-- xapi fix: `union Kind { cpu, xpu, nic, memory, port, switch, device: ref<Device>, custom: string }` with unit variants. When attributes appear, variants grow payloads without a wire break.
+- xapi fix: `union Kind { cpu, xpu, nic, memory, port, switch, device: ref[Device], custom: string }` with unit variants. When attributes appear, variants grow payloads without a wire break.
 
 ### C4 (structural)
 
@@ -240,7 +240,7 @@ No defaults anywhere in the schema, and almost no constraints. `Component.count`
 Referential rules are prose: `Instance.device` "MUST exist in the array of Infrastructure devices"; `Infrastructure.Edge.link` "must exist in the infrastructure's links array"; `Device.Endpoint.device` must match a device and that device must match an instance.
 
 - Evidence: `instance.yaml`, `edge.yaml`.
-- xapi fix: `device: ref<Device>!`, `link: ref<Link>!`.
+- xapi fix: `device: ref[Device]!`, `link: ref[Link]!`.
 
 ### C7 (quality)
 
@@ -248,7 +248,7 @@ Duplicate near-identical shapes: `Device.Edge` vs `Infrastructure.Edge`, `Device
 
 - Evidence: `edge.yaml`.
 
-- xapi fix: `model Edge<E> { ep1: E!, ep2: E!, scheme: Scheme = one2one, link: ref<Link>! }` used as `Edge<DeviceEndpoint>` and `Edge<InstanceEndpoint>`. The inline-required inconsistency is unrepresentable.
+- xapi fix: `model Edge[E] { ep1: E!, ep2: E!, scheme: Scheme = one2one, link: ref[Link]! }` used as `Edge[DeviceEndpoint]` and `Edge[InstanceEndpoint]`. The inline-required inconsistency is unrepresentable.
 
 ### C8 (quality)
 
@@ -264,7 +264,7 @@ Expansion by `count` plus slice indexing means per-index attributes can only be 
 
 - Evidence: PR #88 review thread.
 
-- xapi fix: Make the expanded graph a first-class model (`Graph { nodes: [Node], edges: [GraphEdge] }`) that `get_graph` returns and `set_graph` accepts, so a round trip is lossless. The compact `Infrastructure` form compiles to it.
+- xapi fix: Make the expanded graph a first-class model (`Graph { nodes: table[Node], edges: table[GraphEdge] }`) that `get_graph` returns and `set_graph` accepts, so a round trip is lossless. The compact `Infrastructure` form compiles to it.
 
 ### C10 (quality)
 
@@ -294,7 +294,7 @@ The expanded graph, which can reach hundreds of thousands of nodes and edges, is
 
 - Evidence: `graph.yaml` (`GraphResponseContent.networkx: string`).
 
-- xapi fix: `get_graph` returns `Table<Node>` and `Table<GraphEdge>` as Arrow batches; networkx, pandas and DuckDB load them directly (see 06).
+- xapi fix: `get_graph` returns `table[Node]` and `table[GraphEdge]`, chunked, as Arrow batches when negotiated; networkx, pandas and DuckDB load them directly (see 06).
 
 
 ## Part D — What is right and should be preserved

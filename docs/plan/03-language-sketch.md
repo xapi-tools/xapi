@@ -145,7 +145,7 @@ Why each is irreducible:
   natively and cannot carry octets, length is counted in characters, and the
   native type is text.
 
-- **`bytes`** is not `[u8]`, which would encode as an array of numbers, and not
+- **`bytes`** is not `list[u8]`, which would encode as an array of numbers, and not
   `string`, because the JSON encoding must be base64 and the native type is a
   byte buffer.
 
@@ -249,7 +249,7 @@ Rules:
 |---|---|---|
 | `key`, `key global` | a field modifier on `string` | section 7 (`name: string key`) |
 | `unit` | union syntax for a payload-less variant | section 6 |
-| `Table<T>` | a collection | section 3b |
+| `Table<T>`, `table` declaration | the collection `table[T]` | sections 3b and 8a |
 | `mac ipv4 ipv6 ip cidr hex uuid` | `string` plus a `format` constraint | constraints (section 4); named via `type` aliases, pending |
 | `duration timestamp` | well-known structured values | pending the same discussion |
 
@@ -273,13 +273,18 @@ from the parts' encodings. It comes in two flavours:
   are the only ones with identity.
 
 - *Anonymous* composition gives a structural type written inline from a
-  parametric constructor: the collections `[T]`, `{K: V}`, `Table<T>`, the
-  reference `ref<T>`, and generic instances `G<T>`. Two identical spellings
-  are the same type. They have no ids and are never declared.
+  parametric constructor: the collections `list[T]`, `map[K, V]`, `table[T]`,
+  the reference `ref[T]`, and generic instances `G[T]`. Two identical
+  spellings are the same type. They have no ids and are never declared.
 
-Generics sit across the line: `model<T>` is a template produced by named
-composition, and each instantiation `G<T>` is turned by the compiler into a
-named, nominal type with its own ids and a deterministic name.
+Generics sit across the line: `model Counter[T]` is a template produced by
+named composition, and each instantiation `Counter[uint]` is turned by the
+compiler into a named, nominal type with its own ids and a deterministic name.
+
+All type application uses one shape, `name[args]`. There are no angle
+brackets: `>` is then only ever a comparison operator in `check`
+expressions, and the `>>` lexing problem that C++ and Java had to special-case
+never arises.
 
 Three rules hold for the whole layer:
 
@@ -323,29 +328,38 @@ Three pass:
 
 | Collection | Shape | JSON | Protobuf | Native |
 |---|---|---|---|---|
-| `[T]` | ordered, homogeneous, dense, duplicates allowed | array | `repeated` | list, slice, vector |
-| `{K: V}` | unordered, unique keys | object | `map` | dict, map |
-| `Table<T>` | ordered rows of a column-legal model, columnar | columnar object | one `repeated` per column | table container with column accessors |
+| `list[T]` | ordered, homogeneous, dense, duplicates allowed | array of values | `repeated T` | list, slice, vector |
+| `map[K, V]` | unordered, unique keys | object of values | `map<K, V>` | dict, map |
+| `table[T]` | ordered rows of a flat model, stored by column | object of arrays | generated message, one `repeated` per column | table container with column accessors |
 
-`Table<T>` is a collection and not a variant of `[T]`: the two hold the same
-values and differ in encoding (columnar versus array of objects), native shape
-(column accessors and zero-copy Arrow versus a vector of structs) and
-semantics (per-column nullability, table-wide key uniqueness). Because it is
-a collection over any column-legal `model`, there is no separate `table`
-declaration; column-legality is checked where `Table<T>` is instantiated, as
-with any generic. Details in section 8a.
+Collections are spelled as words with square brackets rather than as symbols:
+the words are self-describing, extensible without inventing bracket
+combinations, searchable, free of collisions with the brace constraint
+syntax, and familiar from Python (`list[int]`, `dict[str, int]`). The JSON
+shape each one mirrors is recorded in the table above rather than in the
+syntax.
+
+`list[T]` and `table[T]` hold the same values, an ordered sequence of rows,
+and every SDK converts between them. They differ in layout. A list is
+row-major: each row is an object or a message, and every key or tag is
+repeated per row. A table is column-major: keys appear once per column,
+numeric columns are packed, and the native container exposes columns directly
+and converts to Arrow and DataFrames without transposing. Use `table[T]` for
+anything measured in thousands of rows (metrics, states, expanded graphs),
+`list[T]` for configuration, where order and per-item references matter and
+rows are few. Rules in section 8a.
 
 ### What xapi leaves out, and why
 
 Same bytes, different validation (a constraint, at most a `@repr` hint):
 
-- Set: `[T]{unique}`. No format has a set encoding, and element order on the
+- Set: `list[T]{unique}`. No format has a set encoding, and element order on the
   wire must be fixed for deterministic documents anyway.
 
-- Fixed-size array: `[T]{len 6..6}`. Arrow fixed-size list and `std::array`
+- Fixed-size array: `list[T]{len 6..6}`. Arrow fixed-size list and `std::array`
   are representation choices.
 
-- Multimap: `{K: [V]}`. Bag: a plain list.
+- Multimap: `map[K, list[V]]`. Bag: a plain list.
 
 Better served by a model or a reference:
 
@@ -353,23 +367,24 @@ Better served by a model or a reference:
   cannot evolve; a model with named fields and ids can.
 
 - Ordered map: JSON objects and protobuf maps are unordered by specification.
-  Order plus lookup is a list of keyed models, which is also what `ref<T>`
+  Order plus lookup is a list of keyed models, which is also what `ref[T]`
   resolves against.
 
-- Tree and graph: models with `ref<T>` or recursion.
+- Tree and graph: models with `ref[T]` or recursion.
 
 Not data shapes at all: deque, queue, stack, linked list, ring buffer and
 priority queue describe how a program manipulates a sequence, and all
 serialise as a list. Optional is a field property. Bitset and flags are
-`[Flag]{unique}` or an integer with `@known`.
+`list[Flag]{unique}` or an integer with `@known`.
 
-Deferred: matrix and tensor. Small ones are `[[float]]`; large numeric blocks
-belong in a `Table<T>` or, if ever needed, an Arrow tensor behind `@repr`.
+Deferred: matrix and tensor. Small ones are `list[list[float]]`; large
+numeric blocks belong in a `table[T]` or, if ever needed, an Arrow tensor
+behind `@repr`.
 
 ### Rules for lists
 
 - Element type: any single type, including another list. Heterogeneity is a
-  union element type (`[Header]`), never a mixed list.
+  union element type (`list[Header]`), never a mixed list.
 
 - Dense: no absent elements.
 
@@ -394,6 +409,21 @@ belong in a `Table<T>` or, if ever needed, an Arrow tensor behind `@repr`.
 
 - Constraint: `len lo..hi`.
 
+### Rules for tables
+
+- Element type: a flat model only. Its fields must be primitives, aliases,
+  enums, refs, or the well-known `duration` and `timestamp`. No nested models,
+  lists, maps, unions or `json`: nesting defeats the columnar layout and
+  DataFrame interop, and the relational answer (a second table with a `ref`
+  column as foreign key) already exists.
+
+- Columns are nullable unless the field is `!` or `key`. A `key` column is
+  unique across the whole table.
+
+- Same values as `list[T]`; `rows()` and `columns()` convert in every SDK.
+
+- Encodings, chunking and the generated API are in section 8a.
+
 ### Rules shared by all collections
 
 - **No presence distinction.** An absent collection and an empty one are the
@@ -405,9 +435,9 @@ belong in a `Table<T>` or, if ever needed, an Arrow tensor behind `@repr`.
 - Defaults are literals only: `= []`, `= {}`, or a list of enum values or unit
   variants such as `= [ethernet]`.
 
-- Length sugar: a bare range directly after `]` or `}` means `len`, because
-  braces attach to the thing immediately to their left and a collection has
-  no other numeric constraint.
+- Length sugar: a bare range directly after a collection's closing bracket
+  means `len` (`list[Header]{1..}`), because a collection has no other numeric
+  constraint.
 
 ## 4. Models and fields
 
@@ -421,10 +451,10 @@ model Port with Named {
 /// An emulated Ethernet interface.
 model Ethernet with EthernetBase {
   connection:     Connection!
-  ipv4_addresses: [Ipv4]
-  ipv6_addresses: [Ipv6]
-  dhcpv4_clients: [Dhcpv4Client]
-  dhcpv6_clients: [Dhcpv6Client]
+  ipv4_addresses: list[Ipv4]
+  ipv6_addresses: list[Ipv6]
+  dhcpv4_clients: list[Dhcpv4Client]
+  dhcpv6_clients: list[Dhcpv6Client]
 
   check connection is simulated_link || mac != null
       : "mac is required unless the connection is a simulated link"
@@ -434,16 +464,17 @@ model Ethernet with EthernetBase {
 mixin EthernetBase with Named {
   mac:   mac
   mtu:   u16 {64..9216} = 1500   @unit(bytes)
-  vlans: [Vlan]
+  vlans: list[Vlan]
 }
 ```
 
-Field syntax: `name: Type[!] [{constraints}] [= default] [@annotations…]`.
+Field syntax: `name: Type` followed optionally by `!`, `{constraints}`,
+`= default` and `@annotations`, in that order.
 
 - `!` marks a required field. A required field cannot have a default (lint).
 
-- `[T]` is a list and `{K: V}` a map; see section 3b for their rules. Both
-  may be union payloads (the proto backend wraps them).
+- `list[T]`, `map[K, V]` and `table[T]` are the collections; see section 3b
+  for their rules. All may be union payloads (the proto backend wraps them).
 
 - Fields are optional by default and have presence. "Unset" and "set to the
   default" are distinguishable until `normalize()` is called. Collections are
@@ -464,12 +495,12 @@ Inside braces, comma-separated. Applicable set depends on the type.
 | `lo..hi`, `lo..`, `..hi` | integers, floats, `duration` | `{64..9216}`, `{1..}` |
 | `len lo..hi` | string, bytes, lists, maps | `{len 1..64}`, `{len 1..}` |
 | `pattern /re/` | string | `{pattern /^[a-z][a-z0-9_]*$/}` |
-| `unique` | lists of scalars or of models with a `key` | `{unique}` |
-| `in [a, b, c]` | scalars | `{in [1, 2, 4, 8]}` |
+| `unique` | lists of primitives or of models with a `key` | `{unique}` |
+| `in [a, b, c]` | primitives | `{in [1, 2, 4, 8]}` |
 | `multiple_of n` | integers | `{multiple_of 8}` |
 
-Sugar: a bare range on a list constrains its length (`[Header]{1..}` is
-`{len 1..}`), because that is what authors mean nine times out of ten.
+Sugar: a bare range on a collection constrains its length (`list[Header]{1..}`
+is `{len 1..}`), because that is what authors mean nine times out of ten.
 
 ### Defaults
 
@@ -477,8 +508,8 @@ Sugar: a bare range on a list constrains its length (`[Header]{1..}` is
 mtu:      u16 = 1500
 state:    State = up
 size:     Size = fixed(64)             // union default: variant and payload
-dst:      AutoPattern<mac> = "00:00:00:00:00:00"   // literal selects `value`
-packet:   [Header]{1..} = [ethernet]   // list default of unit-ish variants
+dst:      AutoPattern[mac] = "00:00:00:00:00:00"   // literal selects `value`
+packet:   list[Header]{1..} = [ethernet]   // list default of unit-ish variants
 metrics:  Metrics = {}                 // present with its own defaults
 ```
 
@@ -507,7 +538,7 @@ enum EtherType: u16 {
 - Closed: unknown values fail decode with a structured error.
 
 - Optional backing type (`: u16`) makes a valued enum; such an enum can be used
-  in `pattern<u16 | EtherType>` so a field accepts either raw numbers or names.
+  in `pattern[u16 | EtherType]` so a field accepts either raw numbers or names.
 
 - Default variant after `=`. Doc comments per value are required.
 
@@ -550,9 +581,9 @@ exclusivity guarantee.
 ```kotlin
 /// How an emulated interface attaches to the topology.
 union Connection {
-  port:           ref<Port>
-  lag:            ref<Lag>
-  vxlan:          ref<VxlanV4Tunnel | VxlanV6Tunnel>
+  port:           ref[Port]
+  lag:            ref[Lag]
+  vxlan:          ref[VxlanV4Tunnel | VxlanV6Tunnel]
   simulated_link: SimulatedLink
 }
 
@@ -586,17 +617,17 @@ union Source {
 model Port with Named { … }          // Named provides `name: string key`
 
 model TxRxPort {
-  tx:  ref<Port>!
-  rx:  [ref<Port>]{1..}
+  tx:  ref[Port]!
+  rx:  list[ref[Port]]{1..}
 }
 ```
 
-- `ref<T>` is a string on the wire whose value must equal the `key` of some `T`
+- `ref[T]` is a string on the wire whose value must equal the `key` of some `T`
   reachable from the document root. `T` must have exactly one `key` field.
 
-- `ref<A | B>` resolves against any of the listed types.
+- `ref[A | B]` resolves against any of the listed types.
 
-- Resolution scope is the document root by default. `ref<T in parent>` limits
+- Resolution scope is the document root by default. `ref[T in parent]` limits
   resolution to the nearest enclosing instance of the referenced container
   (for example a component name resolving within its own device).
 
@@ -611,26 +642,26 @@ model TxRxPort {
 
 ```kotlin
 /// A fixed value, a list of values, or a counter.
-union Pattern<T> = value {
+union Pattern[T] = value {
   value:     T
-  values:    [T]{1..}
-  increment: Counter<T>
-  decrement: Counter<T>
+  values:    list[T]{1..}
+  increment: Counter[T]
+  decrement: Counter[T]
 }
 
 /// A pattern that may also be auto-assigned by the implementation.
-union AutoPattern<T> with Pattern<T> {
+union AutoPattern[T] with Pattern[T] {
   auto
 }
 
 /// A pattern whose values can be tagged in metrics.
-model Tagged<T> {
-  pattern:     Pattern<T>!
-  metric_tags: [MetricTag]
+model Tagged[T] {
+  pattern:     Pattern[T]!
+  metric_tags: list[MetricTag]
 }
 
 /// An arithmetic progression.
-model Counter<T> {
+model Counter[T] {
   start: T!
   step:  T = 1
   count: u32 {1..} = 1
@@ -638,7 +669,7 @@ model Counter<T> {
 ```
 
 - Type parameters are instantiated at compile time (monomorphised). Instantiated
-  names are deterministic: `Pattern<mac>` becomes `Pattern_Mac` in proto and
+  names are deterministic: `Pattern[mac]` becomes `Pattern_Mac` in proto and
   `PatternMac` in Go unless `@proto_name("PatternFlowEthernetDst")` pins a
   legacy name.
 
@@ -655,35 +686,157 @@ generated OTG messages.
 
 ```kotlin
 /// Per-flow traffic metrics.
-table FlowMetric {
-  name:       ref<Flow> key
-  transmit:   TransmitState
-  frames_tx:  u64 @unit(frames)
-  frames_rx:  u64 @unit(frames)
-  loss:       f64 {0..100} @unit(percent)
-  latency:    LatencyMetric          // struct column
-  tagged:     [MetricTag]            // list column
+model FlowMetric {
+  name:      ref[Flow] key
+  frames_tx: uint!          @unit(frames)
+  loss:      float{0..100}  @unit(percent)
+  state:     TransmitState
+}
+
+/// Metrics selected by the request.
+union MetricsResponse {
+  flow: table[FlowMetric]
+  port: table[PortMetric]
+}
+
+rpc get_metrics(MetricsRequest) -> MetricsResponse
+```
+
+`table[T]` is a collection over an ordinary flat model; nothing in the model
+says "table". The compiler checks flatness where `table[T]` is used, as it
+checks any generic argument. The same `FlowMetric` can appear in a `list` or
+as a single value elsewhere.
+
+### JSON
+
+One array per column, all the same length. For three rows where `f2` has no
+loss value and no state:
+
+```json
+{
+  "flow": {
+    "name":      ["f1", "f2", "f3"],
+    "frames_tx": [1000, 1000, 1000],
+    "loss":      [0.0, null, 2.5],
+    "state":     ["started", null, "stopped"]
+  }
 }
 ```
 
-- A `table` is a model restricted to column-legal types: scalars, enums, refs,
-  `duration`, `timestamp`, models made of column-legal fields, and lists of
-  those. Unions, maps and `json` columns are deferred to v0.2.
+- A nullable cell is `null`. A nullable column with no values at all may be
+  omitted. A non-null column must be present whenever there are rows.
 
-- Columns are nullable unless `!`; `key` columns are non-null and unique
-  within the table.
+- Row count is the length of any present column; no columns means no rows.
 
-- `Table<T>` is the container type for rpc results and fields. Its encodings
-  (Arrow IPC, columnar JSON, row JSON, columnar protobuf) and the generated
-  table API are specified in `06-encodings-transports-and-tables.md`.
+- A decoder accepts the row layout too (an array instead of an object cannot
+  be confused with it), so row-oriented producers interoperate; what the model
+  says governs what is emitted.
 
-- `stream Table<T>` on an rpc means a sequence of record batches; a bare
-  `Table<T>` means one batch set delivered whole.
+### Protobuf
+
+Each flat model used as a table gets one generated message, with the row
+model's field ids as column ids:
+
+```proto
+message FlowMetric {                        // the row model, as always
+  string name = 1;
+  uint64 frames_tx = 2;
+  optional double loss = 3;
+  optional TransmitState state = 4;
+}
+
+message FlowMetricTable {                   // table[FlowMetric]
+  repeated string        name      = 1;     // same ids as the row model
+  repeated uint64        frames_tx = 2;     // packed
+  repeated double        loss      = 3;     // packed; a null cell holds 0
+  repeated TransmitState state     = 4;     // packed; a null cell holds the zero value
+  bytes loss_nulls  = 1003;                 // validity bitmap: bit i set = row i is null
+  bytes state_nulls = 1004;                 // omitted when the column has no nulls
+}
+```
+
+A `repeated` field cannot hold a null, so every nullable column carries a
+validity bitmap: one bit per row, least-significant bit first, packed into
+`ceil(rows / 8)` bytes, at id `1000 + column id`, a range the lockfile keeps
+clear. The column keeps a placeholder at a null position so the columns stay
+aligned. Non-null columns never have a bitmap. This is the same scheme Arrow
+uses, so converting a protobuf column to an Arrow array copies the values and
+the bitmap with no per-cell work. The alternatives were rejected: wrapper
+messages per cell double the size and allocate per cell; a `repeated bool`
+costs a byte per row instead of a bit; a sparse index list is not what Arrow
+does.
+
+### Arrow
+
+When the Arrow codec is negotiated, a table is a record batch with the
+mechanically derived schema (`name: utf8`, `frames_tx: uint64 not null`,
+`loss: double`, `state: dictionary<int32, utf8>`), and Arrow's own validity
+bitmaps replace the `*_nulls` fields. Mapping details are in document 06.
+
+### Chunking
+
+Collections are closed under chunking: any row subset of a `table[T]` is a
+`table[T]`, any sub-list of a `list[T]` is a `list[T]`, any disjoint sub-map
+of a `map[K, V]` is a `map[K, V]`. A chunk is a complete, decodable value of
+the same type as the whole, and concatenating the chunks in order gives the
+whole. Models do not have this property.
+
+The rule that follows: **a collection at the top level of an rpc signature,
+or a union whose variants are all collections, is one logical value that
+transports may deliver as an ordered sequence of chunks.** No keyword is
+needed.
+
+- gRPC: the method is generated as a server stream (or client stream for a
+  request) of the collection's message; a small result is a one-message
+  stream. See document 06 for how gRPC frames messages.
+
+- HTTP: `application/x-ndjson`, one chunk per line; a client that asks for
+  `application/json` receives the concatenation as a single value.
+
+- Arrow: the IPC stream format is already a schema followed by record
+  batches.
+
+- Redis: one stream entry per chunk, framed by the envelope's `seq` and `last`.
+
+The producer chooses chunk boundaries, defaulting to 64k rows or 4 MB,
+overridable with `@chunk(rows=…)` on the rpc. Receivers decode each chunk
+independently and run every local constraint on it; collection-wide
+constraints (`key` uniqueness, `unique`, `len` of the whole) are checked
+incrementally and finalised at the last chunk. Generated clients offer both
+views: iterate chunks as they arrive, or `collect()` into the whole.
+
+Within a chunk there is no streaming in any format: a columnar JSON object,
+a protobuf message and an Arrow record batch must each be received whole
+before any row is usable. Chunk size is the knob that trades latency and
+memory against per-message overhead.
+
+### `stream` versus chunking
+
+`stream T` keeps its gRPC meaning: a sequence of independent, complete values
+of `T`, possibly unbounded. Live telemetry is a stream of models that happen
+to contain tables, not a chunked table:
+
+```kotlin
+model MetricsUpdate {
+  at:    timestamp!
+  kind:  UpdateKind = snapshot        // snapshot | delta
+  flows: table[FlowMetric]
+}
+
+rpc watch_metrics(MetricsRequest) -> stream MetricsUpdate
+```
+
+Each message is one complete batch; keys are unique per message, not across
+the stream. A model that merely contains a collection, such as
+`MetricsResponse { flows: table[FlowMetric], ports: table[PortMetric] }`
+written as a model rather than a union, is one message and cannot be split;
+`xapic lint` flags it on a unary rpc and suggests the union form or returning
+the collection directly. That shape is where OTG's `x-stream` came from.
 
 ## 9. Cross-field rules (`check`)
 
 ```kotlin
-model Counter<T> {
+model Counter[T] {
   start: T!
   step:  T = 1
   count: u32 {1..} = 1
@@ -722,6 +875,7 @@ Annotations are declared, not ad hoc. v0.1 built-ins:
 | `@tagged` | unions | Emit an explicit `choice` discriminator |
 | `@http(POST "/config")` | rpc | HTTP binding (gRPC and Redis bindings are derived; `@redis(stream="…")` overrides the stream name) |
 | `@idempotent` | rpc | Transports may retry on timeout |
+| `@chunk(rows=65536)` | rpc returning or accepting a collection | Producer-side chunk size hint (section 8a) |
 | `@schema("otg.capabilities.v1")` | `json` fields | Declares what the opaque value must conform to |
 | `@known(EtherType)` | numeric fields and patterns | Associates a valued enum as a set of named constants |
 
@@ -742,8 +896,8 @@ service Otg {
   /// Merge a partial configuration.
   rpc update_config(ConfigUpdate) -> Warnings      @http(PATCH "/config")
   rpc set_control_state(ControlState) -> Warnings  @http(POST "/control/state")
-  /// Per-flow metrics as a stream of record batches.
-  rpc get_metrics(MetricsRequest) -> stream Table<FlowMetric>
+  /// Metrics for the flows or ports named in the request; chunked in transit.
+  rpc get_metrics(MetricsRequest) -> MetricsResponse
   /// Captured packets, streamed as they become available.
   rpc get_capture(CaptureRequest) -> stream CaptureChunk
 }
@@ -751,7 +905,7 @@ service Otg {
 /// Structured failure.
 error Error {
   code:  ErrorCode!
-  items: [ErrorItem]{1..}
+  items: list[ErrorItem]{1..}
 }
 
 model ErrorItem {
@@ -764,13 +918,16 @@ model ErrorItem {
 - `rpc name(Request?) -> Response [throws Err]`. Omitting `throws` uses the
   service default. `-> unit` for no response body.
 
-- `stream` on the request or response side means a sequence of messages.
+- `stream` on the request or response side means a sequence of independent
+  values. A top-level collection (or union of collections) needs no `stream`:
+  it is one value that transports chunk (section 8a).
 
 - Without `@http`, the default binding is `POST /<service>/<rpc>`; gRPC and
   Redis bindings are always derived from the service and rpc names.
 
 - The encoding (JSON, protobuf, Arrow for tables) is chosen by the caller per
-  client or per call; it is not part of the declaration.
+  client or per call; it is not part of the declaration. Layout (row versus
+  column) is part of the declaration: `list[T]` versus `table[T]`.
 
 - Backends: proto emits `service` and `google.api.http`; OpenAPI emits paths;
   SDKs emit a client with one method per rpc returning `(Response, error)` in
@@ -824,11 +981,11 @@ xapi:
 /// How an emulated interface attaches to the topology.
 union Connection {
   /// The test port the interface is connected to.
-  port:           ref<Port>
+  port:           ref[Port]
   /// The LAG the interface is connected to.
-  lag:            ref<Lag>
+  lag:            ref[Lag]
   /// The VXLAN tunnel the interface rides on.
-  vxlan:          ref<VxlanV4Tunnel | VxlanV6Tunnel>
+  vxlan:          ref[VxlanV4Tunnel | VxlanV6Tunnel]
   /// A link simulated between two emulated interfaces.
   simulated_link: SimulatedLink
 }
@@ -839,12 +996,12 @@ endpoint types, string endpoints with slice syntax, about 130 lines. xapi:
 
 ```kotlin
 /// Connects two endpoints with a link using a wiring scheme.
-model Edge<E> {
+model Edge[E] {
   ep1:    E!
   ep2:    E!
   /// How ep1 instances are wired to ep2 instances.
   scheme: Scheme = one2one
-  link:   ref<Link>!
+  link:   ref[Link]!
 }
 
 /// Wiring scheme between two expanded endpoint sets.
@@ -862,17 +1019,17 @@ model Slice { start: u32 = 0, stop: u32 }
 
 /// A component (or range of components) inside an instance (or range of instances).
 model InstanceEndpoint {
-  instance:        ref<Instance>!
+  instance:        ref[Instance]!
   index:           Slice
-  component:       ref<Component in Device>!
+  component:       ref[Component in Device]!
   component_index: Slice
 }
 
 model Infrastructure with Named {
   description: string
-  devices:     [Device]
-  links:       [Link]
-  instances:   [Instance]
-  edges:       [Edge<InstanceEndpoint>]
+  devices:     list[Device]
+  links:       list[Link]
+  instances:   list[Instance]
+  edges:       list[Edge[InstanceEndpoint]]
 }
 ```

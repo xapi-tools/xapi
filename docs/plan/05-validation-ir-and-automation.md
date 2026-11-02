@@ -13,7 +13,7 @@ that produces errors unless `--all` is requested:
 2. **Local constraints.** Required fields present, braces constraints, `unique`
    on lists, `key` uniqueness within the containing list.
 
-3. **Document constraints.** `key global` uniqueness, `ref<T>` resolution.
+3. **Document constraints.** `key global` uniqueness, `ref[T]` resolution.
 
 4. **Checks.** `check` expressions, evaluated after defaults are applied.
 
@@ -111,12 +111,12 @@ every bug fixed in any runtime.
 
 Initial case groups: scalar formats, ranges and lengths, unions (tagged and
 untagged), refs (root scope, `in` scope, multi-target), keys (list and global),
-generics (`Pattern<T>` across types), checks, deprecations (warning surface),
+generics (`Pattern[T]` across types), checks, deprecations (warning surface),
 unknown fields, defaults on nested models and union payloads, codec round
 trips (every instance encoded through JSON, protobuf and, for tables, Arrow,
-must decode to the same normalised JSON), table encodings (columnar JSON, row
-JSON, columnar protobuf, Arrow IPC with nulls, struct and list columns), and
-the Redis envelope.
+must decode to the same normalised JSON), table encodings (columnar JSON, columnar protobuf with validity bitmaps,
+Arrow IPC, conversion to and from `list[T]`), chunked delivery of top-level
+collections, and the Redis envelope.
 
 ## Automation surfaces
 
@@ -156,7 +156,7 @@ Leaning: Yes: `@schema(Capabilities)` validates the opaque value against a model
 
 Leaning: v0.2. Keep v0.1 compilable to native code with no closures.
 
-**Q3.** Should `ref<T>` carry an optional `?` for soft references that may dangle?
+**Q3.** Should `ref[T]` carry an optional `?` for soft references that may dangle?
 
 Leaning: No. A dangling reference is always an error; model it as `string` if it is not a reference.
 

@@ -37,7 +37,7 @@ xapi answer: Constraints in braces after the type. Compiled to native checks and
 
 A "port name" is a `string`. Referential integrity is a convention.
 
-xapi answer: `key` fields and `ref<T>` types. Resolved and checked at validation time.
+xapi answer: `key` fields and `ref[T]` types. Resolved and checked at validation time.
 
 **Enums must start at zero, share C scope, are open**
 
@@ -157,7 +157,7 @@ xapi answer: One: presence plus `!` plus `=`.
 
 None. `x-constraint` with yamlpath strings.
 
-xapi answer: `key` and `ref<T>`.
+xapi answer: `key` and `ref[T]`.
 
 **Responses by status code**
 
@@ -169,7 +169,7 @@ xapi answer: `rpc f(Req) -> Resp throws Err`. Status codes are a binding detail.
 
 "MUST be unique", "MUST exist in devices", "MUST be configured unless simulated_link". None is checked.
 
-xapi answer: Those are `key`, `ref<T>` and `check` respectively.
+xapi answer: Those are `key`, `ref[T]` and `check` respectively.
 
 
 ## What xapi keeps from each
