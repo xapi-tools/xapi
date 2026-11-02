@@ -249,12 +249,165 @@ Rules:
 |---|---|---|
 | `key`, `key global` | a field modifier on `string` | section 7 (`name: string key`) |
 | `unit` | union syntax for a payload-less variant | section 6 |
-| `Table<T>` | a container over a `table` | section 8a |
+| `Table<T>` | a collection | section 3b |
 | `mac ipv4 ipv6 ip cidr hex uuid` | `string` plus a `format` constraint | constraints (section 4); named via `type` aliases, pending |
 | `duration timestamp` | well-known structured values | pending the same discussion |
 
 Examples below still use `mac`, `ipv4` and `duration` as type names. Read them
 as placeholders for whatever that discussion decides.
+
+## 3a. Derived types: the two mechanisms
+
+Everything that is not primitive is derived, by one of two mechanisms.
+
+**Restriction** shrinks the value set of an existing type without touching
+its encoding or native shape. It produces one kind, the alias (`type`), and
+constraints are its vocabulary.
+
+**Composition** builds a new type from parts, and the encoding is computed
+from the parts' encodings. It comes in two flavours:
+
+- *Named* composition gives a nominal type: `model` (product), `union` (sum),
+  `enum` (closed set of names). Two identical bodies are two different types.
+  These are the only types with lockfile ids and evolution rules, because they
+  are the only ones with identity.
+
+- *Anonymous* composition gives a structural type written inline from a
+  parametric constructor: the collections `[T]`, `{K: V}`, `Table<T>`, the
+  reference `ref<T>`, and generic instances `G<T>`. Two identical spellings
+  are the same type. They have no ids and are never declared.
+
+Generics sit across the line: `model<T>` is a template produced by named
+composition, and each instantiation `G<T>` is turned by the compiler into a
+named, nominal type with its own ids and a deterministic name.
+
+Three rules hold for the whole layer:
+
+1. No inline named composition. Every model, union and enum has a name.
+
+2. Presence is a field property, never a type. No `T?`, no `nullable`, no
+   absent elements inside collections.
+
+3. Encodings are compositional. The wire form of a derived type is a pure
+   function of its kind and its parts. This is what makes aliases free,
+   generators small and the conformance suite finite.
+
+## 3b. Collections
+
+### What exists elsewhere
+
+Programming languages offer many collection shapes: list, fixed-size array,
+tuple, set, map, ordered map, multimap, deque, queue, stack, linked list,
+optional, bag, bitset, matrix, dataframe. Serialisation formats are far more
+conservative:
+
+| Format | Collections it can encode |
+|---|---|
+| JSON, CBOR, MessagePack | array, object |
+| Protobuf | `repeated`, `map` |
+| Avro | array, map |
+| Thrift | list, set, map |
+| Smithy | list, map (`set` deprecated in favour of list with `@uniqueItems`) |
+| Arrow | list, fixed-size list, map, struct, union, dictionary |
+
+Every format reduces the zoo to an ordered sequence and a keyed lookup, plus
+the columnar forms Arrow adds. Thrift shipped `set` as a type; Smithy later
+deprecated exactly that in favour of a constraint, which is the precedent xapi
+follows.
+
+### What xapi includes
+
+A collection kind earns a place only if it has its own encoding or its own
+native shape that cannot be obtained from another kind plus a constraint.
+Three pass:
+
+| Collection | Shape | JSON | Protobuf | Native |
+|---|---|---|---|---|
+| `[T]` | ordered, homogeneous, dense, duplicates allowed | array | `repeated` | list, slice, vector |
+| `{K: V}` | unordered, unique keys | object | `map` | dict, map |
+| `Table<T>` | ordered rows of a column-legal model, columnar | columnar object | one `repeated` per column | table container with column accessors |
+
+`Table<T>` is a collection and not a variant of `[T]`: the two hold the same
+values and differ in encoding (columnar versus array of objects), native shape
+(column accessors and zero-copy Arrow versus a vector of structs) and
+semantics (per-column nullability, table-wide key uniqueness). Because it is
+a collection over any column-legal `model`, there is no separate `table`
+declaration; column-legality is checked where `Table<T>` is instantiated, as
+with any generic. Details in section 8a.
+
+### What xapi leaves out, and why
+
+Same bytes, different validation (a constraint, at most a `@repr` hint):
+
+- Set: `[T]{unique}`. No format has a set encoding, and element order on the
+  wire must be fixed for deterministic documents anyway.
+
+- Fixed-size array: `[T]{len 6..6}`. Arrow fixed-size list and `std::array`
+  are representation choices.
+
+- Multimap: `{K: [V]}`. Bag: a plain list.
+
+Better served by a model or a reference:
+
+- Tuple: positional and heterogeneous. Protobuf cannot encode it and positions
+  cannot evolve; a model with named fields and ids can.
+
+- Ordered map: JSON objects and protobuf maps are unordered by specification.
+  Order plus lookup is a list of keyed models, which is also what `ref<T>`
+  resolves against.
+
+- Tree and graph: models with `ref<T>` or recursion.
+
+Not data shapes at all: deque, queue, stack, linked list, ring buffer and
+priority queue describe how a program manipulates a sequence, and all
+serialise as a list. Optional is a field property. Bitset and flags are
+`[Flag]{unique}` or an integer with `@known`.
+
+Deferred: matrix and tensor. Small ones are `[[float]]`; large numeric blocks
+belong in a `Table<T>` or, if ever needed, an Arrow tensor behind `@repr`.
+
+### Rules for lists
+
+- Element type: any single type, including another list. Heterogeneity is a
+  union element type (`[Header]`), never a mixed list.
+
+- Dense: no absent elements.
+
+- Constraints: `len lo..hi`, `unique`. On a list of models `unique` compares
+  the `key` field and requires one; on primitives it compares values.
+
+- Nested lists get a synthesised wrapper message on the protobuf side.
+
+### Rules for maps
+
+- Key type: `string`, `int` or an int alias, or an `enum`. Not `float`,
+  `bytes`, `bool` or a model. Non-string keys are strings in JSON; enum keys
+  are the value name in both JSON and protobuf, since protobuf forbids enum
+  map keys.
+
+- Value type: any single type except another map (deferred). Lists as values
+  get a synthesised wrapper on the protobuf side.
+
+- Values are never absent; a missing key is the only absence.
+
+- Unordered. The JSON encoder sorts keys so documents are deterministic.
+
+- Constraint: `len lo..hi`.
+
+### Rules shared by all collections
+
+- **No presence distinction.** An absent collection and an empty one are the
+  same value. Protobuf cannot tell them apart for `repeated` and `map`, and
+  preserving a difference that half the wire formats drop would make the
+  conformance suite lie. `!` on a collection therefore means non-empty, exactly
+  `len 1..`, and `xapic fmt` rewrites one into the other.
+
+- Defaults are literals only: `= []`, `= {}`, or a list of enum values or unit
+  variants such as `= [ethernet]`.
+
+- Length sugar: a bare range directly after `]` or `}` means `len`, because
+  braces attach to the thing immediately to their left and a collection has
+  no other numeric constraint.
 
 ## 4. Models and fields
 
@@ -289,12 +442,12 @@ Field syntax: `name: Type[!] [{constraints}] [= default] [@annotations…]`.
 
 - `!` marks a required field. A required field cannot have a default (lint).
 
-- `[T]` is a list. `{K: V}` is a map with `K` in `string`, integer types or an
-  enum. Lists of lists are allowed; maps of lists are allowed; maps as union
-  payloads are allowed (the proto backend wraps them).
+- `[T]` is a list and `{K: V}` a map; see section 3b for their rules. Both
+  may be union payloads (the proto backend wraps them).
 
 - Fields are optional by default and have presence. "Unset" and "set to the
-  default" are distinguishable until `normalize()` is called.
+  default" are distinguishable until `normalize()` is called. Collections are
+  the exception: absent and empty are the same value (section 3b).
 
 - `mixin` contributes fields to the including type. The including type owns
   their ids. A mixin may include other mixins. No diamond conflicts: duplicate
