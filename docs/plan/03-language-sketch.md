@@ -34,17 +34,60 @@ use otg.flow.headers.*
 - A manifest `xapi.toml` at the repository root names the project, its version
   and its dependencies (other xapi projects, pinned by version).
 
-## 2. Documentation
+## 2. Documentation and comments
 
 ```kotlin
 /// A stream of packets from a transmit endpoint to one or more receive endpoints.
 /// Headers are listed outermost first.
-model Flow { … }
+model Flow {
+  // TODO: confirm with vendors whether egress_packet survives review.
+  …
+}
 ```
 
-`///` is required on every model, union, enum, mixin, service, rpc, field,
-variant and enum value. Missing docs are an error, not a warning. The first
-sentence is the summary used by generators for short docstrings.
+Two syntaxes, two roles:
+
+- `///` is **documentation**. It is data: carried into the IR, emitted as
+  docstrings in Python, Go and C++, as comments in the `.proto`, as
+  descriptions in OpenAPI and the HTML docs. It is required on every model,
+  union, enum, mixin, table, service, rpc, field, variant and enum value;
+  a missing `///` is an error. The first sentence is the summary used where
+  only a short description fits.
+
+- `//` is a **comment**. It stays in the source file and is never emitted.
+
+Why two syntaxes rather than one:
+
+- The rule "everything is documented" is only enforceable if the checker can
+  tell which comment counts. With a single syntax the rule degrades to "some
+  comment appears above it", which is how protobuf-generated docs end up full
+  of leaked implementation notes.
+
+- Position is not a reliable signal. "A comment directly above a declaration
+  is its documentation" breaks silently on a blank line, a commented-out
+  field or a note written between the doc and the declaration. An explicit
+  marker fails loudly instead.
+
+Why `///` is the documentation marker and not the other way round:
+
+- Mark the one with consequences. A `///` line is published to every SDK
+  user; a `//` line is a no-op. The no-op is the safe default, the publish is
+  the deliberate act.
+
+- Commenting out code must be harmless. If `//` were documentation,
+  `// mtu: u16 {64..9216}` above a field would silently become that field's
+  description. With `///` for docs it is simply ignored.
+
+- Every C-family language, protobuf included, treats `//` as text the tooling
+  ignores. Reversing that would publish stray notes from any pasted snippet
+  and would make editors' colouring misleading.
+
+- The terseness gain of the reversal is one character per documentation
+  line; the cost is a rare special spelling that people forget precisely
+  because it is rare.
+
+This follows Rust, C#, Dart and Swift, so it reads as intended without
+explanation.
 
 ## 3. Primitive types (locked)
 
