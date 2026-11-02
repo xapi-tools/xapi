@@ -9,9 +9,12 @@ that produces errors unless `--all` is requested:
 1. **Shape.** Unknown fields (error by default, warning with `lenient`), union
    with zero or more than one variant, enum value not in set, scalar format
    (`mac`, `ipv4`, …), integer range of the declared width.
+
 2. **Local constraints.** Required fields present, braces constraints, `unique`
    on lists, `key` uniqueness within the containing list.
+
 3. **Document constraints.** `key global` uniqueness, `ref<T>` resolution.
+
 4. **Checks.** `check` expressions, evaluated after defaults are applied.
 
 `normalize()` fills defaults and canonicalises formatted scalars; it never
@@ -77,12 +80,15 @@ Properties:
 
 - **Deterministic.** Sorted keys, stable field order (source order), no
   timestamps. Two runs on the same input produce identical bytes.
+
 - **Complete.** Resolved types only; generics instantiated; mixins flattened
   but recorded; ids present; docs present; constraint ASTs present so a tool
   need not parse expressions.
+
 - **Schema'd.** `spec/ir.schema.json` (JSON Schema 2020-12) is published and
   versioned with `ir_version`. Additive changes bump the minor; anything else
   bumps the major.
+
 - **Self-describing paths.** Every field has a canonical path
   (`otg.device.Ethernet.mtu`) that capability declarations, lints, docs and
   MCP tools can use as a stable identifier across releases.
@@ -92,8 +98,10 @@ Properties:
 `conformance/cases/<name>/` contains:
 
 - `model.xapi` — the model under test (small, focused).
+
 - `instances/*.json` — documents, each with a sibling `*.expect.json` listing
   the exact error set (codes and paths) or `[]` for valid.
+
 - `normalized/*.json` — expected output of `normalize()` for selected inputs.
 
 A runner per language loads the generated SDK for `model.xapi`, runs each
@@ -131,18 +139,36 @@ the Redis envelope.
 - `core`: docs present, unused types, uid gaps (informational), required with
   default, numeric field with unit-like words in docs but no `@unit`,
   description containing `MUST` (suggest `key`/`ref`/`check`).
+
 - `otg`: snake_case fields, PascalCase types, no scalar fields on root types,
   `name` first in `Named` types, deprecated before removed.
+
 - `infragraph`: counts have `{1..}`, every enum value documented, no string
   fields whose docs mention slice or path syntax.
 
 ## Open design questions (beyond the decisions in 00)
 
-| # | Question | Current leaning |
-|---|---|---|
-| Q1 | Should `json` fields accept `@schema` pointing at an xapi type as well as external JSON Schema? | Yes: `@schema(Capabilities)` validates the opaque value against a model from the same project. |
-| Q2 | Quantifiers in `check` (`all x in list: …`) in v0.1 or v0.2? | v0.2. Keep v0.1 compilable to native code with no closures. |
-| Q3 | Should `ref<T>` carry an optional `?` for soft references that may dangle? | No. A dangling reference is always an error; model it as `string` if it is not a reference. |
-| Q4 | Map keys of enum type on the proto side (proto forbids enum map keys)? | Encode as the enum's string name; document the loss. |
-| Q5 | Per-package versions or one project version? | One project version (matches OTG and InfraGraph practice); `@since` records introduction. |
-| Q6 | Where do lockfiles live for generic instantiations that cross packages? | In the instantiating package's section; the generic definition has no ids of its own. |
+**Q1.** Should `json` fields accept `@schema` pointing at an xapi type as well as external JSON Schema?
+
+Leaning: Yes: `@schema(Capabilities)` validates the opaque value against a model from the same project.
+
+**Q2.** Quantifiers in `check` (`all x in list: …`) in v0.1 or v0.2?
+
+Leaning: v0.2. Keep v0.1 compilable to native code with no closures.
+
+**Q3.** Should `ref<T>` carry an optional `?` for soft references that may dangle?
+
+Leaning: No. A dangling reference is always an error; model it as `string` if it is not a reference.
+
+**Q4.** Map keys of enum type on the proto side (proto forbids enum map keys)?
+
+Leaning: Encode as the enum's string name; document the loss.
+
+**Q5.** Per-package versions or one project version?
+
+Leaning: One project version (matches OTG and InfraGraph practice); `@since` records introduction.
+
+**Q6.** Where do lockfiles live for generic instantiations that cross packages?
+
+Leaning: In the instantiating package's section; the generic definition has no ids of its own.
+

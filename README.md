@@ -25,6 +25,10 @@ so automations can reason about a model without parsing source.
 
 ## Status
 
+Code blocks containing xapi are tagged `kotlin` purely so that renderers
+colour them; no renderer knows xapi yet. A real grammar arrives with the LSP
+in Phase 7.
+
 Planning. Nothing is implemented yet. Start with
 [docs/plan/00-roadmap.md](docs/plan/00-roadmap.md).
 

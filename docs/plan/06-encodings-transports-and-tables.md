@@ -5,6 +5,7 @@ Two requirements that reshape the runtime design:
 1. An RPC must be callable over **HTTP**, **gRPC** and **Redis**, with **JSON**
    as a fully supported encoding on every one of them, not a debugging
    convenience.
+
 2. **Big tables** (metrics, states, expanded graphs, captures, telemetry) must
    move between processes efficiently, and the format must be a deliberate
    choice rather than "a JSON list of row objects".
@@ -35,10 +36,13 @@ Rules that hold for every codec:
   It is not "whatever protojson does". The protobuf codec must round-trip to
   exactly the same JSON through the generated types, which the conformance
   suite checks.
+
 - A codec is chosen per call or per client, never baked into generated types.
+
 - The default **JSON number rule**: `i64`/`u64` are JSON numbers (matches OTG
   practice and every non-JavaScript consumer). A codec option `int64_as_string`
   exists for JavaScript peers. The IR records the type, so consumers know.
+
 - Other row-oriented binary encodings (CBOR, MessagePack) are deliberately not
   in v1: for small messages protobuf wins, for tables Arrow wins.
 
@@ -71,30 +75,39 @@ All three transports implement one runtime interface per language
 
 - a **client** per service: one method per rpc, taking a request type and
   returning the response type (or an iterator/stream);
+
 - a **handler interface** per service for implementors;
+
 - a **dispatcher** that routes an envelope to the handler and encodes the
   result, shared by every transport.
 
 ### HTTP
 
 - Method and path from `@http`, default `POST /<service>/<rpc>`.
+
 - Request `Content-Type` selects the codec; `Accept` selects the response
   codec; the server may answer in the request's codec when `Accept` is absent.
+
 - Streaming rpcs: newline-delimited JSON (`application/x-ndjson`), or a
   length-prefixed protobuf stream, or an Arrow IPC stream for tables.
+
 - Errors: HTTP status from the error's `code` category, body is the xapi
   `Error` in the negotiated codec.
+
 - Large payloads are the transport's problem: HTTP has no 4 MB default limit,
   so `set_config` with a 50 MB config needs no chunking in the model.
 
 ### gRPC
 
 - Proto services generated from `service`; default codec protobuf.
+
 - `grpc+json` codec registered in every runtime so the same stubs can carry
   JSON (useful with gateways and for polyglot debugging).
+
 - Big messages: the runtime raises the per-call message limit and, for
   `stream` rpcs, sends chunks. There is no `x-stream` flag on the model; a
   unary rpc with a big payload is still unary to the caller.
+
 - Tables: a `stream Table<T>` rpc sends one record batch per message.
 
 ### Redis
@@ -102,7 +115,7 @@ All three transports implement one runtime interface per language
 Redis is used as a message bus, in three patterns, all defined on top of
 one envelope type written in xapi itself (dogfooding):
 
-```xapi
+```kotlin
 package xapi.transport.redis
 
 /// One request or response carried over Redis.
@@ -134,8 +147,10 @@ enum Encoding = json { json, protobuf, arrow }
 - Streams, not lists, so replies survive a client reconnect and work is
   acknowledged (`XACK`), which gives at-least-once delivery and horizontal
   scaling of servers through consumer groups.
+
 - Payload size: Redis values are capped at 512 MB, but entries above a few MB
   hurt latency; tables are sent as one record batch per entry.
+
 - Client libraries: `redis-py`, `go-redis`, `redis-plus-plus` (C++). All are
   optional extras of the runtime.
 
@@ -159,7 +174,7 @@ graph of 100k nodes is returned as a YAML string inside a JSON string.
 
 ### The `table` declaration
 
-```xapi
+```kotlin
 /// Per-flow traffic metrics.
 table FlowMetric {
   name:            ref<Flow> key
@@ -185,7 +200,9 @@ A `table` is a model with restrictions that guarantee a columnar layout:
   fields are themselves column-legal (struct columns), lists of column-legal
   types. No unions, no `json`, no maps in v1 (Arrow can do all three; they are
   deferred, not refused).
+
 - Columns are nullable unless `!`; `key` columns are non-null and unique.
+
 - `Table<T>` is a built-in generic container usable only where `T` is a
   `table`. It is the type of rpc results and of fields (`metrics: Table<FlowMetric>`).
 
@@ -246,6 +263,7 @@ same generated schema.
 - OTG `Metrics.Response`, `States.Response` and capture metadata become
   `Table<...>` declarations; the row-JSON codec option keeps existing clients
   working while new clients get streaming and DataFrames for free.
+
 - InfraGraph's expanded graph becomes two tables, `Table<Node>` and
   `Table<GraphEdge>`, returned by `get_graph` and accepted by `set_graph`, which
   also fixes the lossy round trip noted in PR #88. `networkx` import is a
@@ -256,10 +274,13 @@ same generated schema.
 - Roadmap: Phase 3 to 5 each include the three transports and the three codecs
   for that language; a new conformance group covers codec round trips and
   table encodings. New decisions D10 to D12.
+
 - Language: `table` declaration, `Table<T>` built-in, `@idempotent`,
   `@redis(stream="...")` optional override; `stream` semantics clarified.
+
 - Generators: runtime `Codec` and `Transport` interfaces; Arrow schema
   emitter; columnar protobuf messages; Redis envelope dogfooded from
   `xapi.transport.redis`.
+
 - Critique: OTG B11 (row-oriented metrics) and InfraGraph C13 (graph as a
   string) are added with these fixes.

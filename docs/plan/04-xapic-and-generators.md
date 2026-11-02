@@ -10,16 +10,21 @@
 
 1. **Lexer and parser.** Hand-written recursive descent in Go. Error recovery
    per declaration so one typo yields one diagnostic, not a cascade.
+
 2. **Resolve.** Packages, `use`, type names, generic instantiation, mixin
    flattening. Produces a closed set of concrete types.
+
 3. **Check.** Type rules (constraint applicability, default type matches field
    type, `ref<T>` target has exactly one `key`, `check` expressions type-check,
    required fields have no default, docs present, annotation schemas).
+
 4. **Lock.** Load `xapi.lock`; assign ids to new elements; move deleted ids to
    reserved; fail in `--frozen` mode if anything changed (CI).
+
 5. **IR.** Canonical JSON (`xapic ir`). Everything downstream consumes the IR,
    including the generators inside `xapic` itself. This guarantees external
    tools see exactly what the generators see.
+
 6. **Backends.** Templates (`text/template`) plus a formatter pass:
    `buf format`, `black`, `gofmt`, `clang-format`. Output is committed to the
    consuming repo, like protoc output, and is reproducible byte for byte.
@@ -69,9 +74,12 @@ values = { up = 1, down = 2 }
 
 - Keyed by fully qualified type; entries sorted; one line per type so merge
   conflicts are local and meaningful.
+
 - New elements get `max(existing, reserved) + 1`.
+
 - Generic instantiations are keyed by their mangled name
   (`otg.flow.Pattern<mac>`), so each instantiation keeps its own stable numbers.
+
 - The importer seeds the lockfile from `x-field-uid` and
   `x-reserved-field-uids`, which is how wire compatibility with existing
   OTG and InfraGraph protobuf is achieved.
@@ -156,10 +164,13 @@ class Connection:
 ```
 
 - Plain classes with `__slots__`, full type hints, `py.typed`.
+
 - Unions are small classes with a `kind` and exactly one populated payload;
   constructors per variant; pattern matching via `match conn.kind:`.
+
 - No runtime dependency beyond `xapi-runtime` (which depends on nothing for
   JSON; protobuf and grpc are optional extras).
+
 - Sync and async clients (`httpx` for HTTP, `grpcio` or `grpclib` for gRPC).
 
 ## Go backend
@@ -185,8 +196,11 @@ func (e *Ethernet) Normalize()
 
 - One Go package per xapi package. `go vet`, `staticcheck` and `golangci-lint`
   clean is a CI gate.
+
 - Optional scalars are pointers; helpers `xapi.Ptr(v)` and `xapi.Or(p, def)`.
+
 - Enums are `type State string` with constants and `Valid()`.
+
 - Clients take `context.Context` first and return `(T, error)`; errors wrap
   `*xapi.ValidationError` or `*xapi.RemoteError`.
 
@@ -210,8 +224,10 @@ using Connection = std::variant<ConnectionPort, ConnectionLag, ConnectionVxlan, 
 ```
 
 - C++20, one header and one source per package, CMake package config.
+
 - `nlohmann::json` for JSON, `std::variant` for unions, `std::expected` (or a
   shipped polyfill) for results, protobuf conversion behind a CMake option.
+
 - No exceptions in the generated validation path.
 
 ## Importer (`xapic import openapiart`)
@@ -241,14 +257,18 @@ suspects is wrong (uid gaps, duplicate descriptions, prose rules containing
 
 - **Golden tests** per backend: fixture `.xapi` in, expected files out,
   diffed byte for byte.
+
 - **Compile tests**: generated Python is imported and `mypy --strict` clean;
   Go is `go build` and `go vet` clean; C++ compiles under GCC and Clang with
   warnings as errors; proto passes `buf lint` and `buf breaking`.
+
 - **Conformance suite** (see 05) runs the same cases through every runtime,
   including codec round trips (JSON ↔ protobuf ↔ Arrow produce identical
   normalised JSON) and table encodings.
+
 - **Interop matrix**: every client language against every server language
   over every transport, with a fixed set of rpcs including a streamed table.
+
 - **End-to-end**: the generated OTG Python and Go clients run a traffic test
   against ixia-c in CI (ports, one flow, metrics), proving real-world
   interoperability with existing implementations.

@@ -8,14 +8,17 @@ Design rules:
 
 1. One line per field. Name, type, constraints, default, annotations, in that
    order, left to right.
+
 2. Everything that is a rule is a token the compiler checks. Prose is for
    meaning, never for constraints.
+
 3. Nothing is numbered by hand.
+
 4. Source order is documentation order. Wire order comes from the lockfile.
 
 ## 1. Files, packages, imports
 
-```xapi
+```kotlin
 // otg/flow/flow.xapi
 package otg.flow
 
@@ -24,14 +27,16 @@ use otg.flow.headers.*
 ```
 
 - One package per directory. A package may span several files.
+
 - Names resolve within the package, then through `use`. Fully qualified
   `otg.port.Port` always works.
+
 - A manifest `xapi.toml` at the repository root names the project, its version
   and its dependencies (other xapi projects, pinned by version).
 
 ## 2. Documentation
 
-```xapi
+```kotlin
 /// A stream of packets from a transmit endpoint to one or more receive endpoints.
 /// Headers are listed outermost first.
 model Flow { … }
@@ -41,66 +46,168 @@ model Flow { … }
 variant and enum value. Missing docs are an error, not a warning. The first
 sentence is the summary used by generators for short docstrings.
 
-## 3. Core scalars (locked)
+## 3. Primitive types (locked)
 
-The core is deliberately small. A type is a primitive only if it passes this
-test:
+### Vocabulary
+
+Two pairs of words are used throughout the specification and never mixed:
+
+- **Primitive / derived** describe xapi types. A primitive type is defined by
+  the language itself, with its own encoding rule, and cannot be built from
+  other xapi types. Every other type is derived from primitives, by
+  restriction (aliases) or by composition (declared and parametric types).
+
+- **Native / generated** describe target types. A native type already exists
+  in the target language or runtime (`uint16`, `str`, `nlohmann::json`,
+  `google.protobuf.Value`). A generated type is emitted by `xapic`.
+
+The two axes are independent: every primitive maps to a native type, and so do
+aliases and a few well-known derived types; models, unions, enums and tables
+map to generated types.
+
+The word "scalar" is not used: one primitive is not a scalar value.
+
+### The test
+
+A type is primitive only if it passes this test:
 
 > It cannot be expressed as another primitive plus a constraint without
 > changing its wire encoding or its natural native type.
 
-Six kinds of value pass. Everything else that looked like a scalar in earlier
-drafts is a constraint, a field modifier, a container, or a named alias.
+Six types pass.
 
-| Primitive | Values | JSON | Protobuf | Why it is irreducible |
-|---|---|---|---|---|
-| `bool` | true, false | `true`/`false` | `bool` | Not `int {0..1}`: JSON encodes it as a literal, not a number, and every language has a distinct boolean. |
-| `int` | integers | number | varint (`int64`/`uint64` or narrower, see aliases) | Signedness and width are range and representation properties, not kinds of value. One integer type; see below. |
-| `float` | IEEE reals | number (`"NaN"`, `"Inf"`, `"-Inf"` as strings) | `double` (or `float`, see aliases) | Not `int` with a range: the value set contains non-integers. Precision is a representation hint, not a kind. |
-| `string` | Unicode text, valid UTF-8 | string | `string` | Not "bytes with a UTF-8 constraint": JSON carries text natively, length is in characters, native type is text. |
-| `bytes` | octet sequence | base64 string | `bytes` | JSON cannot carry octets, so the encoding differs from `string`; native type is a byte buffer; `[u8]` would encode as an array of numbers. |
-| `json` | any JSON value | inline value | `google.protobuf.Value` | The one open type. A JSON document inside a `string` is double-encoded, opaque to tools and unvalidatable (InfraGraph flaw C2). Strictly an open value rather than a scalar; it lives in the core because nothing else can express it. |
+### The six primitives
 
-Native defaults: `int` is 64-bit signed, `float` is 64-bit. Those never change
+| Primitive | Values | JSON | Protobuf |
+|---|---|---|---|
+| `bool` | true, false | `true` / `false` | `bool` |
+| `int` | integers | number | varint |
+| `float` | IEEE reals | number; `"NaN"`, `"Inf"`, `"-Inf"` as strings | `double` |
+| `string` | Unicode text, valid UTF-8 | string | `string` |
+| `bytes` | octet sequence | base64 string | `bytes` |
+| `json` | any JSON value | the value itself, inline | `google.protobuf.Value` |
+
+Why each is irreducible:
+
+- **`bool`** is not `int {0..1}`. JSON encodes it as a literal, not a number,
+  and every language has a distinct boolean type.
+
+- **`int`** is the only integer type. Signedness and width are a range and a
+  representation hint respectively, not kinds of value (see aliases below).
+
+- **`float`** is not `int` with a range: its value set contains non-integers.
+  Precision (32 versus 64 bit) is a representation hint, not a kind.
+
+- **`string`** is not "bytes with a UTF-8 constraint". JSON carries text
+  natively and cannot carry octets, length is counted in characters, and the
+  native type is text.
+
+- **`bytes`** is not `[u8]`, which would encode as an array of numbers, and not
+  `string`, because the JSON encoding must be base64 and the native type is a
+  byte buffer.
+
+- **`json`** is the one open value. Its encoding rule, "the value is its own
+  encoding", cannot be derived from models, unions or maps, and its native type
+  is the target's dynamic JSON type rather than a generated class. See the
+  section below.
+
+Native defaults: `int` is 64-bit signed, `float` is 64-bit. These never change
 when a range changes, so generated SDK types are stable.
+
+### `json` in detail
+
+A `json` field carries a value whose shape the model deliberately does not
+know.
+
+```kotlin
+/// A graph node after expansion.
+model Node {
+  id:         string key
+  type:       NodeType
+  /// Attributes attached by annotate_graph; their shape is owned by the caller.
+  attributes: json
+}
+```
+
+On the wire the value is embedded as itself:
+
+```json
+{
+  "id": "server[0].xpu[1]",
+  "type": "xpu",
+  "attributes": { "rank": 1, "labels": ["gpu", "hbm3"], "owner": { "team": "ml" } }
+}
+```
+
+In protobuf the field is `google.protobuf.Value`, which `grpcurl` and gateways
+print as ordinary JSON. `Value` stores numbers as doubles; a model that needs
+exact integers above 2^53 inside an open value uses `@repr(text)`, which maps
+the protobuf side to a `string` holding JSON text while the JSON encoding stays
+embedded.
+
+Native types: Python `dict | list | str | int | float | bool | None`, Go
+`json.RawMessage`, C++ `nlohmann::json`. Decoding checks well-formedness only;
+`@schema(T)` additionally validates the value against a named xapi model or an
+external JSON Schema.
+
+Why it is not a `string` alias: a JSON document inside a `string` is encoded
+as an escaped string literal, is opaque to tools, cannot be validated by a
+regular expression (JSON is not a regular language), and compares as text
+rather than as a value. That is InfraGraph's `Annotation.Attribute.value`
+today (flaw C2).
+
+Why it is not a map: a map is homogeneous and flat. `{string: string}`
+re-creates the stringly-typed problem; `{string: Value}` with a union of
+primitives encodes tagged (`"rank": {"int": 1}`) and cannot nest; a recursive
+union can represent any JSON value but still encodes tagged and generates a
+`Value` class instead of the native dynamic type. `json` is exactly that
+recursive union with an untagged encoding and a native representation, which
+is what makes it primitive.
+
+Use it only at deliberate extension points: annotations, vendor extras, user
+metadata, pass-through payloads, diagnostics on errors. `xapic lint` warns
+when a `json` field is used where a declared type would do.
 
 ### Representation aliases
 
-`i8 i16 i32 i64 u8 u16 u32 u64 f32 f64` are **aliases**, not primitives. Each
-is a primitive plus an implied range plus a representation hint, and nothing
-more:
+`uint`, `i8 i16 i32 i64`, `u8 u16 u32 u64`, `f32 f64` are aliases, not
+primitives. Each is a primitive plus an implied range plus a representation
+hint, and nothing more:
 
 | Alias | Means | Native | Why it exists |
 |---|---|---|---|
-| `uint` | `int {0..}` | unsigned 64-bit | Counters and sizes read naturally as unsigned in Go, C++ and Arrow. |
-| `u8 u16 u32 u64` | `int {0..2^n-1}` | unsigned n-bit | Packet fields are genuinely n-bit; table columns are n/8 bytes wide. |
-| `i8 i16 i32 i64` | `int {-2^(n-1)..2^(n-1)-1}` | signed n-bit | Same, signed. |
-| `f32` | `float` | 32-bit | Half the memory in a column; interop with existing protobuf `float` fields. |
-| `f64` | `float` | 64-bit | Spelled out for symmetry; identical to `float`. |
+| `uint` | `int {0..}` | unsigned 64-bit | counters and sizes read naturally as unsigned in Go, C++ and Arrow |
+| `u8 u16 u32 u64` | `int {0..2^n-1}` | unsigned n-bit | packet fields are genuinely n-bit; table columns are n/8 bytes wide |
+| `i8 i16 i32 i64` | `int {-2^(n-1)..2^(n-1)-1}` | signed n-bit | same, signed |
+| `f32` | `float` | 32-bit | half the memory in a column; interop with existing protobuf `float` fields |
+| `f64` | `float` | 64-bit | spelled out for symmetry; identical to `float` |
 
 Rules:
 
 - An alias never changes validation beyond the range it implies. `u16 {64..9216}`
   and `uint {64..9216}` accept exactly the same values; only the generated
   native type differs.
-- A range that exceeds the alias is a compile error.
-- Protobuf: all integer forms are varints and wire-compatible with each other,
-  so the backend uses the narrowest standard proto scalar (`int32`, `uint32`,
-  `int64`, `uint64`); `float` versus `double` is **not** wire-compatible, so
-  changing `f32` to `float` is reported as a wire break by `xapic check
-  --against`.
-- Changing an alias on a field is always reported as an SDK-breaking change.
-- Width inference from ranges is deliberately not done: it would change
-  generated types whenever a range moves across a boundary.
 
-### Things that are not scalars
+- A range that exceeds the alias is a compile error.
+
+- Protobuf: all integer forms are varints and wire-compatible with each other,
+  so the backend uses the narrowest standard proto scalar. `float` versus
+  `double` is not wire-compatible, so changing `f32` to `float` is reported as
+  a wire break by `xapic check --against`.
+
+- Changing an alias on a field is always reported as an SDK-breaking change.
+
+- Width is never inferred from a range: that would change generated types
+  whenever a range crossed a boundary.
+
+### Things that are not primitives
 
 | Earlier draft | Is actually | Where it lives now |
 |---|---|---|
 | `key`, `key global` | a field modifier on `string` | section 7 (`name: string key`) |
 | `unit` | union syntax for a payload-less variant | section 6 |
 | `Table<T>` | a container over a `table` | section 8a |
-| `mac ipv4 ipv6 ip cidr hex uuid` | `string` plus a `format` constraint | constraints (section 4), named via `type` aliases; the set of well-known names is a pending discussion |
+| `mac ipv4 ipv6 ip cidr hex uuid` | `string` plus a `format` constraint | constraints (section 4); named via `type` aliases, pending |
 | `duration timestamp` | well-known structured values | pending the same discussion |
 
 Examples below still use `mac`, `ipv4` and `duration` as type names. Read them
@@ -108,7 +215,7 @@ as placeholders for whatever that discussion decides.
 
 ## 4. Models and fields
 
-```xapi
+```kotlin
 /// A test port.
 model Port with Named {
   /// Where the traffic generator is reached, for example `10.0.0.1;1;2`.
@@ -138,14 +245,18 @@ mixin EthernetBase with Named {
 Field syntax: `name: Type[!] [{constraints}] [= default] [@annotations…]`.
 
 - `!` marks a required field. A required field cannot have a default (lint).
+
 - `[T]` is a list. `{K: V}` is a map with `K` in `string`, integer types or an
   enum. Lists of lists are allowed; maps of lists are allowed; maps as union
   payloads are allowed (the proto backend wraps them).
+
 - Fields are optional by default and have presence. "Unset" and "set to the
   default" are distinguishable until `normalize()` is called.
+
 - `mixin` contributes fields to the including type. The including type owns
   their ids. A mixin may include other mixins. No diamond conflicts: duplicate
   field names across mixins are an error.
+
 - `check <expr> : "message"` is a cross-field rule (section 9).
 
 ### Constraints
@@ -166,7 +277,7 @@ Sugar: a bare range on a list constrains its length (`[Header]{1..}` is
 
 ### Defaults
 
-```xapi
+```kotlin
 mtu:      u16 = 1500
 state:    State = up
 size:     Size = fixed(64)             // union default: variant and payload
@@ -181,7 +292,7 @@ caller asks for a "complete" document.
 
 ## 5. Enums
 
-```xapi
+```kotlin
 /// Administrative state of a link.
 enum State = up { up, down }
 
@@ -196,14 +307,17 @@ enum EtherType: u16 {
 
 - Scoped: `State.up`. The proto backend emits `STATE_UP` style names and a
   zero `UNSPECIFIED` sentinel that xapi code never sees.
+
 - Closed: unknown values fail decode with a structured error.
+
 - Optional backing type (`: u16`) makes a valued enum; such an enum can be used
   in `pattern<u16 | EtherType>` so a field accepts either raw numbers or names.
+
 - Default variant after `=`. Doc comments per value are required.
 
 ## 6. Unions
 
-```xapi
+```kotlin
 /// One protocol header. Exactly one variant is present.
 union Header = ethernet {
   custom:                Custom
@@ -237,7 +351,7 @@ union Header = ethernet {
 28 lines against 140 in `header.yaml`, with the same information plus an
 exclusivity guarantee.
 
-```xapi
+```kotlin
 /// How an emulated interface attaches to the topology.
 union Connection {
   port:           ref<Port>
@@ -262,15 +376,17 @@ union Source {
 ```
 
 - Variants may carry any type, including scalars, lists, maps, refs, and `unit`.
+
 - `@tagged` on a union emits an explicit discriminator field named `choice` on
   the wire (needed for OTG wire compatibility). Default is untagged: the present
   key is the discriminator, matching protobuf `oneof` and protojson.
+
 - Target idioms: Python has a `.kind` property and typed accessors; Go uses a
   sealed interface with one struct per variant; C++ uses `std::variant`.
 
 ## 7. References and keys
 
-```xapi
+```kotlin
 model Port with Named { … }          // Named provides `name: string key`
 
 model TxRxPort {
@@ -281,19 +397,23 @@ model TxRxPort {
 
 - `ref<T>` is a string on the wire whose value must equal the `key` of some `T`
   reachable from the document root. `T` must have exactly one `key` field.
+
 - `ref<A | B>` resolves against any of the listed types.
+
 - Resolution scope is the document root by default. `ref<T in parent>` limits
   resolution to the nearest enclosing instance of the referenced container
   (for example a component name resolving within its own device).
+
 - Generated code exposes refs as a distinct type (`PortRef` in Go,
   `Ref[Port]` in Python, `xapi::Ref<Port>` in C++) with a `resolve(doc)` helper.
+
 - `key` is a modifier on a `string` field: required and unique within the
   containing list. `key global` is unique across the whole document.
   Uniqueness is checked by `validate()`.
 
 ## 8. Generics
 
-```xapi
+```kotlin
 /// A fixed value, a list of values, or a counter.
 union Pattern<T> = value {
   value:     T
@@ -325,7 +445,9 @@ model Counter<T> {
   names are deterministic: `Pattern<mac>` becomes `Pattern_Mac` in proto and
   `PatternMac` in Go unless `@proto_name("PatternFlowEthernetDst")` pins a
   legacy name.
+
 - A `with` on a union adds the variants of another union (union mixin).
+
 - Constraints can reference `T` where the type permits (`T {1..}` is allowed
   only when `T` is instantiated with a numeric type; the compiler checks at
   instantiation).
@@ -335,7 +457,7 @@ generated OTG messages.
 
 ## 8a. Tables
 
-```xapi
+```kotlin
 /// Per-flow traffic metrics.
 table FlowMetric {
   name:       ref<Flow> key
@@ -351,17 +473,20 @@ table FlowMetric {
 - A `table` is a model restricted to column-legal types: scalars, enums, refs,
   `duration`, `timestamp`, models made of column-legal fields, and lists of
   those. Unions, maps and `json` columns are deferred to v0.2.
+
 - Columns are nullable unless `!`; `key` columns are non-null and unique
   within the table.
+
 - `Table<T>` is the container type for rpc results and fields. Its encodings
   (Arrow IPC, columnar JSON, row JSON, columnar protobuf) and the generated
   table API are specified in `06-encodings-transports-and-tables.md`.
+
 - `stream Table<T>` on an rpc means a sequence of record batches; a bare
   `Table<T>` means one batch set delivered whole.
 
 ## 9. Cross-field rules (`check`)
 
-```xapi
+```kotlin
 model Counter<T> {
   start: T!
   step:  T = 1
@@ -409,7 +534,7 @@ appear in the IR; generators ignore the ones they do not know.
 
 ## 11. Services
 
-```xapi
+```kotlin
 /// Open Traffic Generator control API.
 service Otg {
   errors Error                                     // default error type
@@ -442,11 +567,15 @@ model ErrorItem {
 
 - `rpc name(Request?) -> Response [throws Err]`. Omitting `throws` uses the
   service default. `-> unit` for no response body.
+
 - `stream` on the request or response side means a sequence of messages.
+
 - Without `@http`, the default binding is `POST /<service>/<rpc>`; gRPC and
   Redis bindings are always derived from the service and rpc names.
+
 - The encoding (JSON, protobuf, Arrow for tables) is chosen by the caller per
   client or per call; it is not part of the declaration.
+
 - Backends: proto emits `service` and `google.api.http`; OpenAPI emits paths;
   SDKs emit a client with one method per rpc returning `(Response, error)` in
   Go, raising a typed exception in Python, and returning
@@ -457,9 +586,12 @@ model ErrorItem {
 
 - `xapic lock` assigns ids to new fields, variants and enum values and writes
   `xapi.lock`. `xapic check` fails if the lockfile is stale, so CI enforces it.
+
 - Deleting a declaration moves its id into the type's reserved set.
+
 - Renaming is `@renamed_from("old")`, which keeps the id and emits aliases where
   the target can (JSON decode accepts both; proto keeps the number).
+
 - Changing a field's type is a wire break unless the proto encoding is
   identical; `xapic check --against <git-ref>` reports breaks the way
   `buf breaking` does, but at the xapi level.
@@ -492,7 +624,7 @@ Ethernet.Connection:
 
 xapi:
 
-```xapi
+```kotlin
 /// How an emulated interface attaches to the topology.
 union Connection {
   /// The test port the interface is connected to.
@@ -509,7 +641,7 @@ union Connection {
 InfraGraph `Infrastructure.Edge` and `Device.Edge` today: two types, two
 endpoint types, string endpoints with slice syntax, about 130 lines. xapi:
 
-```xapi
+```kotlin
 /// Connects two endpoints with a link using a wiring scheme.
 model Edge<E> {
   ep1:    E!
