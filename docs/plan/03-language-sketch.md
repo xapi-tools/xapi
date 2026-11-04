@@ -496,7 +496,6 @@ Inside braces, comma-separated. Applicable set depends on the type.
 | `pattern /re/` | string | `{pattern /^[a-z][a-z0-9_]*$/}` |
 | `format name` | string | `{format mac}` |
 | `unique` | lists of primitives or of models with a `key` | `{unique}` |
-| `multiple_of n` | integers | `{multiple_of 8}` |
 
 **Range (locked).** Both ends inclusive; an open end is unbounded; `a..a` is
 exactly `a`, and a standalone `a` is sugar for `a..a`. A range constrains the type's natural magnitude: the value of
@@ -868,7 +867,11 @@ Expression subset (deliberately small, compiled to native code and to CEL):
 
 - field paths: `a.b.c`, `list[i]`, `len(x)`, `x != null`
 - union tests: `u is variant`, `u.variant` (payload)
-- comparisons `== != < <= > >=`, boolean `&& || !`, `in [..]`
+- comparisons `== != < <= > >=`, arithmetic `+ - * / %`, boolean `&& || !`,
+  `in [..]`
+
+Arithmetic rules such as alignment live here rather than in the constraint
+set: `check step % 8 == 0 : "step must be a multiple of 8"`.
 - literals of all scalar types
 
 No function calls beyond `len`, no quantifiers in v0.1 (`all`/`any` over lists

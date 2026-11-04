@@ -35,7 +35,7 @@ object can still be invalid, and callers choose when to pay for passes 2 to 4.
 }
 ```
 
-Codes are closed: `required`, `range`, `length`, `pattern`, `multiple_of`,
+Codes are closed: `required`, `range`, `length`, `pattern`,
 `unique`, `unknown_ref`, `union_multiple`, `union_none`, `enum_unknown`,
 `format`, `unknown_field`, `check_failed`. Extra keys per code are specified in
 `spec/semantics.md` so a UI can render them without parsing messages.
