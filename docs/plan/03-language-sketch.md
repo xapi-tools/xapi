@@ -353,10 +353,10 @@ rows are few. Rules in section 8a.
 
 Same bytes, different validation (a constraint, at most a `@repr` hint):
 
-- Set: `list[T]{unique}`. No format has a set encoding, and element order on the
+- Set: `list[T] {unique}`. No format has a set encoding, and element order on the
   wire must be fixed for deterministic documents anyway.
 
-- Fixed-size array: `list[T]{len 6..6}`. Arrow fixed-size list and `std::array`
+- Fixed-size array: `list[T]{6..6}`. Arrow fixed-size list and `std::array`
   are representation choices.
 
 - Multimap: `map[K, list[V]]`. Bag: a plain list.
@@ -388,8 +388,9 @@ behind `@repr`.
 
 - Dense: no absent elements.
 
-- Constraints: `len lo..hi`, `unique`. On a list of models `unique` compares
-  the `key` field and requires one; on primitives it compares values.
+- Constraints: a range (number of elements), `unique`. On a list of models
+  `unique` compares the `key` field and requires one; on primitives it
+  compares values.
 
 - Nested lists get a synthesised wrapper message on the protobuf side.
 
@@ -407,7 +408,7 @@ behind `@repr`.
 
 - Unordered. The JSON encoder sorts keys so documents are deterministic.
 
-- Constraint: `len lo..hi`.
+- Constraint: a range (number of entries).
 
 ### Rules for tables
 
@@ -430,14 +431,13 @@ behind `@repr`.
   same value. Protobuf cannot tell them apart for `repeated` and `map`, and
   preserving a difference that half the wire formats drop would make the
   conformance suite lie. `!` on a collection therefore means non-empty, exactly
-  `len 1..`, and `xapic fmt` rewrites one into the other.
+  `{1..}`, and `xapic fmt` rewrites one into the other.
 
 - Defaults are literals only: `= []`, `= {}`, or a list of enum values or unit
   variants such as `= [ethernet]`.
 
-- Length sugar: a bare range directly after a collection's closing bracket
-  means `len` (`list[Header]{1..}`), because a collection has no other numeric
-  constraint.
+- A range on a collection is its number of entries (`list[Header] {1..}`);
+  see the range rule in section 4.
 
 ## 4. Models and fields
 
@@ -492,15 +492,24 @@ Inside braces, comma-separated. Applicable set depends on the type.
 
 | Constraint | Applies to | Example |
 |---|---|---|
-| `lo..hi`, `lo..`, `..hi` | integers, floats, `duration` | `{64..9216}`, `{1..}` |
-| `len lo..hi` | string, bytes, lists, maps | `{len 1..64}`, `{len 1..}` |
+| range: `a..`, `..b`, `a..b`, `a..a` | every type with a magnitude | `{64..9216}`, `{1..}`, `{6..6}` |
 | `pattern /re/` | string | `{pattern /^[a-z][a-z0-9_]*$/}` |
+| `format name` | string | `{format mac}` |
 | `unique` | lists of primitives or of models with a `key` | `{unique}` |
 | `in [a, b, c]` | primitives | `{in [1, 2, 4, 8]}` |
 | `multiple_of n` | integers | `{multiple_of 8}` |
 
-Sugar: a bare range on a collection constrains its length (`list[Header]{1..}`
-is `{len 1..}`), because that is what authors mean nine times out of ten.
+**Range (locked).** Both ends inclusive; an open end is unbounded; `a..a` is
+exactly `a`. A range constrains the type's natural magnitude: the value of
+an `int`, `float` or `duration`; the size of a `string` (Unicode scalar
+values), `bytes` (octets), list or map (entries). There is no separate
+length keyword, because no type has both a value range and a size. A range
+must be well-formed at compile time (`a <= b`, within the bounds of the
+type's kind). On `float`, a range also rejects NaN and infinities, since
+they compare false against any bound.
+
+Whitespace between the type and the brace is free; `xapic fmt` emits one
+space: `uint {64..9216}`.
 
 ### Defaults
 
