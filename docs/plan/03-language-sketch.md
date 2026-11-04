@@ -492,7 +492,7 @@ Inside braces, comma-separated. Applicable set depends on the type.
 
 | Constraint | Applies to | Example |
 |---|---|---|
-| range: `a..`, `..b`, `a..b`, `a..a` | every type with a magnitude | `{64..9216}`, `{1..}`, `{6..6}` |
+| range: `a..`, `..b`, `a..b`, `a..a`, `a` | every type with a magnitude | `{64..9216}`, `{1..}`, `{6}` |
 | `pattern /re/` | string | `{pattern /^[a-z][a-z0-9_]*$/}` |
 | `format name` | string | `{format mac}` |
 | `unique` | lists of primitives or of models with a `key` | `{unique}` |
@@ -500,7 +500,7 @@ Inside braces, comma-separated. Applicable set depends on the type.
 | `multiple_of n` | integers | `{multiple_of 8}` |
 
 **Range (locked).** Both ends inclusive; an open end is unbounded; `a..a` is
-exactly `a`. A range constrains the type's natural magnitude: the value of
+exactly `a`, and a standalone `a` is sugar for `a..a`. A range constrains the type's natural magnitude: the value of
 an `int`, `float` or `duration`; the size of a `string` (Unicode scalar
 values), `bytes` (octets), list or map (entries). There is no separate
 length keyword, because no type has both a value range and a size. A range
