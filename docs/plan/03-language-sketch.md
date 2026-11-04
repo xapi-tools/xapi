@@ -250,11 +250,11 @@ Rules:
 | `key`, `key global` | a field modifier on `string` | section 7 (`name: string key`) |
 | `unit` | union syntax for a payload-less variant | section 6 |
 | `Table<T>`, `table` declaration | the collection `table[T]` | sections 3b and 8a |
-| `mac ipv4 ipv6 ip cidr hex uuid` | `string` plus a `format` constraint | constraints (section 4); named via `type` aliases, pending |
-| `duration timestamp` | well-known structured values | pending the same discussion |
+| `mac ipv4 ipv6 ip cidr hex uuid` | `string` aliases with a pattern and `@repr` | section 4 (pattern); the standard library |
+| `duration timestamp` | `int` aliases with `@unit` | the standard library |
 
-Examples below still use `mac`, `ipv4` and `duration` as type names. Read them
-as placeholders for whatever that discussion decides.
+Examples below use `mac`, `ipv4` and `duration` as if the standard library
+already declared them.
 
 ## 3a. Derived types: the two mechanisms
 
@@ -493,8 +493,7 @@ Inside braces, comma-separated. Applicable set depends on the type.
 | Constraint | Applies to | Example |
 |---|---|---|
 | range: `a..`, `..b`, `a..b`, `a..a`, `a` | every type with a magnitude | `{64..9216}`, `{1..}`, `{6}` |
-| `pattern /re/` | string | `{pattern /^[a-z][a-z0-9_]*$/}` |
-| `format name` | string | `{format mac}` |
+| `/re/` | string | `{/[a-z][a-z0-9_]*/}` |
 | `unique` | lists of primitives or of models with a `key` | `{unique}` |
 
 **Range (locked).** Both ends inclusive; an open end is unbounded; `a..a` is
@@ -508,6 +507,20 @@ they compare false against any bound.
 
 Whitespace between the type and the brace is free; `xapic fmt` emits one
 space: `uint {64..9216}`.
+
+**Pattern (locked).** A regex literal between slashes, no keyword: it is
+self-identifying and raw (regex escapes only, `\/` for a literal slash).
+Applies to `string` only. Full match: the whole value must match, so authors
+write no anchors, and the JSON Schema backend emits `^(?:…)$` because JSON
+Schema's `pattern` is a search. RE2 syntax, verified at compile time; inline
+flags such as `(?i)` replace a flag suffix; lookaround and backreferences are
+errors. Matching is over Unicode scalar values, consistent with string length.
+
+There is no `format` constraint. A well-known text shape is an alias with a
+pattern and a `@repr` naming the native type, for example
+`type Mac = string {/(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}/} @repr(mac)`; the
+pattern validates, the native type canonicalises on encode where a runtime
+has it. `duration` and `timestamp` are integers with `@unit`, not formats.
 
 **One brace per field.** Constraints appear once, after the whole type, and
 apply to it. Type arguments are bare types: `list[uint {1..}]` is an error.
