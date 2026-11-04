@@ -388,9 +388,8 @@ behind `@repr`.
 
 - Dense: no absent elements.
 
-- Constraints: a range (number of elements), `unique`. On a list of models
-  `unique` compares the `key` field and requires one; on primitives it
-  compares values.
+- Constraints: a range (number of elements), `unique` (primitives, aliases,
+  enums, refs only; models are unique by `key`).
 
 - Nested lists get a synthesised wrapper message on the protobuf side.
 
@@ -486,15 +485,15 @@ Field syntax: `name: Type` followed optionally by `!`, `{constraints}`,
 
 - `check <expr> : "message"` is a cross-field rule (section 9).
 
-### Constraints
+### Constraints (locked)
 
-Inside braces, comma-separated. Applicable set depends on the type.
+Inside braces, comma-separated, all must hold. Three constraints exist.
 
 | Constraint | Applies to | Example |
 |---|---|---|
 | range: `a..`, `..b`, `a..b`, `a..a`, `a` | every type with a magnitude | `{64..9216}`, `{1..}`, `{6}` |
 | `/re/` | string | `{/[a-z][a-z0-9_]*/}` |
-| `unique` | lists of primitives or of models with a `key` | `{unique}` |
+| `unique` | lists of primitives, aliases, enums or refs | `{unique}` |
 
 **Range (locked).** Both ends inclusive; an open end is unbounded; `a..a` is
 exactly `a`, and a standalone `a` is sugar for `a..a`. A range constrains the type's natural magnitude: the value of
@@ -521,6 +520,19 @@ pattern and a `@repr` naming the native type, for example
 `type Mac = string {/(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}/} @repr(mac)`; the
 pattern validates, the native type canonicalises on encode where a runtime
 has it. `duration` and `timestamp` are integers with `@unit`, not formats.
+
+**Unique (locked).** No two elements equal; order is preserved. Applies only
+to lists whose element type is a primitive, alias, enum or `ref`. On a list of
+models it is an error: uniqueness of models is what `key` means. Maps are
+unique by construction. There is no `set` type: the wire has no set encoding
+and order keeps mattering (Smithy removed `set` for the same reasons); a native
+set is reachable with `@repr(set)` if wanted. Error path points at the second
+occurrence.
+
+Removed from earlier drafts, with the reason: `len` (a range already means
+size on a sized type), `in` (a valued enum adds a name, docs, ids and a native
+type), `multiple_of` (arithmetic belongs in `check`), `format` (a pattern plus
+`@repr` plus normalisation, not a constraint).
 
 **One brace per field.** Constraints appear once, after the whole type, and
 apply to it. Type arguments are bare types: `list[uint {1..}]` is an error.
