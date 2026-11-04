@@ -496,7 +496,6 @@ Inside braces, comma-separated. Applicable set depends on the type.
 | `pattern /re/` | string | `{pattern /^[a-z][a-z0-9_]*$/}` |
 | `format name` | string | `{format mac}` |
 | `unique` | lists of primitives or of models with a `key` | `{unique}` |
-| `in [a, b, c]` | primitives | `{in [1, 2, 4, 8]}` |
 | `multiple_of n` | integers | `{multiple_of 8}` |
 
 **Range (locked).** Both ends inclusive; an open end is unbounded; `a..a` is
@@ -548,6 +547,12 @@ enum EtherType: u16 {
 
 - Optional backing type (`: u16`) makes a valued enum; such an enum can be used
   in `pattern[u16 | EtherType]` so a field accepts either raw numbers or names.
+
+- A valued enum is also how a closed set of legal numbers is expressed
+  (`enum Speed: uint { mbps_10 = 10, mbps_100 = 100 }`). There is no `in`
+  constraint: an enum adds a name, per-value documentation, stable ids and a
+  native type, and a legal value with no name usually has no documented
+  meaning either.
 
 - Default variant after `=`. Doc comments per value are required.
 
