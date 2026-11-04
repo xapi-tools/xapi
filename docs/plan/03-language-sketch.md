@@ -509,6 +509,17 @@ they compare false against any bound.
 Whitespace between the type and the brace is free; `xapic fmt` emits one
 space: `uint {64..9216}`.
 
+**One brace per field.** Constraints appear once, after the whole type, and
+apply to it. Type arguments are bare types: `list[uint {1..}]` is an error.
+A constrained element, map value or generic argument gets a named alias,
+which also gives it documentation and a place for `@unit`:
+
+```kotlin
+type Speed = uint {1..}  @unit(mbps)
+
+speeds: list[Speed] {1..}     // each element at least 1; at least one element
+```
+
 ### Defaults
 
 ```kotlin
@@ -677,7 +688,7 @@ model Tagged[T] {
 model Counter[T] {
   start: T!
   step:  T = 1
-  count: u32 {1..} = 1
+  count: uint {1..} = 1
 }
 ```
 
@@ -688,9 +699,9 @@ model Counter[T] {
 
 - A `with` on a union adds the variants of another union (union mixin).
 
-- Constraints can reference `T` where the type permits (`T {1..}` is allowed
-  only when `T` is instantiated with a numeric type; the compiler checks at
-  instantiation).
+- A type parameter is used bare inside the generic body, like any type
+  argument; constraints on it come from the alias passed at instantiation
+  (`Counter[Speed]`), never from the generic itself.
 
 This single feature removes the `x-field-pattern` meta-schema and hundreds of
 generated OTG messages.
